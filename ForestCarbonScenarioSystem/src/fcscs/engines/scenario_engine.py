@@ -1,0 +1,875 @@
+import math
+
+import numpy as np
+import pandas as pd
+
+from fcscs.domain.models import EventTable
+from fcscs.engines.raster_tools import parse_code_list, path_exists, read_raster, rasterio_is_available
+
+
+class ScenarioEngine:
+    def __init__(self):
+        self.last_patch_library = None
+
+    def generate_all_events(self, config):
+        self._check_config(config)
+        if config.use_raster_data:
+            return self._generate_all_events_from_rasters(config)
+
+        rng = np.random.default_rng(config.base_seed)
+        reserve_mask = self._build_reserve_mask(config)
+
+        logging_events = self._generate_logging_events(config, rng, reserve_mask)
+        logging_pixels = self._build_pixel_id_set(logging_events.records)
+
+        urban_conv_events = self._generate_urban_conv_events(config, rng, reserve_mask, logging_pixels)
+        conv_pixels = self._build_pixel_id_set(urban_conv_events.records)
+
+        urban_edge_events = self._generate_urban_edge_events(
+            config,
+            urban_conv_events.records,
+            reserve_mask,
+            logging_pixels,
+            conv_pixels,
+        )
+
+        return [logging_events, urban_conv_events, urban_edge_events]
+
+    def _generate_all_events_from_rasters(self, config):
+        self._check_raster_config(config)
+        rng = np.random.default_rng(config.base_seed)
+
+        lulc_base, _ = read_raster(config.lulc_base_raster_path)
+        lulc_target, _ = read_raster(config.lulc_target_raster_path)
+
+        rows, cols = lulc_base.shape
+        config.grid_rows = int(rows)
+        config.grid_cols = int(cols)
+
+        reserve_mask = self._build_raster_reserve_mask(config, lulc_base.shape)
+        forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
+
+        forest_base = np.isin(lulc_base, forest_codes)
+        forest_target = np.isin(lulc_target, forest_codes)
+        urban_target = np.isin(lulc_target, urban_codes)
+
+        logging_events = self._generate_raster_logging_events(config, rng, forest_target, reserve_mask)
+        logging_pixels = self._build_pixel_id_set(logging_events.records)
+
+        urban_conv_events = self._generate_raster_urban_conv_events(
+            config,
+            rng,
+            forest_base,
+            urban_target,
+            reserve_mask,
+            logging_pixels,
+        )
+        conv_pixels = self._build_pixel_id_set(urban_conv_events.records)
+
+        urban_edge_events = self._generate_raster_urban_edge_events(
+            config,
+            urban_conv_events.records,
+            forest_target,
+            reserve_mask,
+            logging_pixels,
+            conv_pixels,
+        )
+
+        return [logging_events, urban_conv_events, urban_edge_events]
+
+    def _check_raster_config(self, config):
+        if not rasterio_is_available():
+            raise ValueError("当前环境缺少 rasterio，不能读取 GeoTIFF 栅格。")
+
+        required_items = [
+            ("基准年LULC", config.lulc_base_raster_path),
+            ("目标年LULC", config.lulc_target_raster_path),
+        ]
+        missing = []
+        for name, path in required_items:
+            if not path_exists(path):
+                missing.append(f"{name}: {path}")
+
+        if missing:
+            text = "真实栅格模式缺少必要文件：\n" + "\n".join(missing)
+            raise ValueError(text)
+
+    def _build_raster_reserve_mask(self, config, shape):
+        if path_exists(config.reserve_raster_path):
+            reserve, _ = read_raster(config.reserve_raster_path)
+            if reserve.shape != shape:
+                raise ValueError("保护区栅格尺寸必须和 LULC 栅格一致。")
+            return reserve == config.reserve_value
+
+        return np.zeros(shape, dtype=bool)
+
+    def _generate_raster_logging_events(self, config, rng, forest_target, reserve_mask):
+        if path_exists(config.drivers_raster_path):
+            drivers, _ = read_raster(config.drivers_raster_path)
+            if drivers.shape != forest_target.shape:
+                raise ValueError("Drivers 栅格尺寸必须和 LULC 栅格一致。")
+            logging_source = drivers == config.logging_driver_value
+        else:
+            logging_source = forest_target.copy()
+
+        potential_mask = logging_source & forest_target & (~reserve_mask)
+        target_count = int(potential_mask.sum() * (1 - config.logging_area_reduction))
+
+        patch_library = RasterLoggingPatchLibrary()
+        patch_library.build_from_mask(potential_mask, config)
+        self.last_patch_library = patch_library
+
+        records = patch_library.sample_future_events(config, rng, reserve_mask, target_count)
+        return EventTable("logging", records)
+
+    def _generate_raster_urban_conv_events(self, config, rng, forest_base, urban_target, reserve_mask, logging_pixels):
+        conv_mask = forest_base & urban_target & (~reserve_mask)
+        rows, cols = np.where(conv_mask)
+        raw_count = len(rows)
+
+        if raw_count == 0:
+            return EventTable("urban_conv", self._empty_event_frame())
+
+        keep_count = int(raw_count * (1 - config.urban_area_reduction))
+        if keep_count < 0:
+            keep_count = 0
+        if keep_count > raw_count:
+            keep_count = raw_count
+
+        if keep_count == 0:
+            return EventTable("urban_conv", self._empty_event_frame())
+
+        picked_index = rng.choice(raw_count, size=keep_count, replace=False)
+        picked_rows = rows[picked_index]
+        picked_cols = cols[picked_index]
+        years = self._pick_years(config.future_years, keep_count, config.urban_speed_shift, rng)
+
+        records = []
+        for index in range(keep_count):
+            row = int(picked_rows[index])
+            col = int(picked_cols[index])
+            pixel_id = self._build_pixel_id(config, row, col)
+            if pixel_id in logging_pixels:
+                continue
+            records.append(
+                {
+                    "pixel_id": pixel_id,
+                    "row": row,
+                    "col": col,
+                    "type": "urban_conv",
+                    "y_event": int(years[index]),
+                }
+            )
+
+        if not records:
+            return EventTable("urban_conv", self._empty_event_frame())
+        return EventTable("urban_conv", pd.DataFrame(records))
+
+    def _generate_raster_urban_edge_events(
+        self,
+        config,
+        conv_df,
+        forest_target,
+        reserve_mask,
+        logging_pixels,
+        conv_pixels,
+    ):
+        edge_year_map = {}
+        edge_position_map = {}
+        blocked_pixels = set(logging_pixels)
+        for pixel_id in conv_pixels:
+            blocked_pixels.add(pixel_id)
+
+        for _, item in conv_df.iterrows():
+            conv_row = int(item["row"])
+            conv_col = int(item["col"])
+            conv_year = int(item["y_event"])
+            neighbors = self._get_neighbor_cells(conv_row, conv_col, config.grid_rows, config.grid_cols)
+
+            for row, col in neighbors:
+                if reserve_mask[row, col]:
+                    continue
+                if not forest_target[row, col]:
+                    continue
+
+                pixel_id = self._build_pixel_id(config, row, col)
+                if pixel_id in blocked_pixels:
+                    continue
+
+                if pixel_id not in edge_year_map:
+                    edge_year_map[pixel_id] = conv_year
+                    edge_position_map[pixel_id] = (row, col)
+                elif conv_year < edge_year_map[pixel_id]:
+                    edge_year_map[pixel_id] = conv_year
+                    edge_position_map[pixel_id] = (row, col)
+
+        records = []
+        for pixel_id in sorted(edge_year_map.keys()):
+            row, col = edge_position_map[pixel_id]
+            records.append(
+                {
+                    "pixel_id": pixel_id,
+                    "row": row,
+                    "col": col,
+                    "type": "urban_edge",
+                    "y_event": int(edge_year_map[pixel_id]),
+                }
+            )
+
+        if not records:
+            return EventTable("urban_edge", self._empty_event_frame())
+        return EventTable("urban_edge", pd.DataFrame(records))
+
+    def _empty_event_frame(self):
+        return pd.DataFrame(columns=["pixel_id", "row", "col", "type", "y_event"])
+
+    def _generate_logging_events(self, config, rng, reserve_mask):
+        base_count = 2200
+        target_count = self._calculate_event_count(base_count, config.logging_area_reduction)
+
+        patch_library = LoggingPatchLibrary()
+        patch_library.build_library(config, rng)
+        self.last_patch_library = patch_library
+
+        records = patch_library.sample_future_events(config, rng, reserve_mask, target_count)
+        return EventTable("logging", records)
+
+    def _generate_urban_conv_events(self, config, rng, reserve_mask, logging_pixels):
+        base_count = 1800
+        target_count = self._calculate_event_count(base_count, config.urban_area_reduction)
+        years = self._pick_years(config.future_years, target_count, config.urban_speed_shift, rng)
+        centers = self._build_urban_centers(config, rng, reserve_mask)
+        used_pixels = set(logging_pixels)
+        records = []
+
+        for event_year in years:
+            cell = self._pick_urban_cell(config, rng, reserve_mask, centers, used_pixels)
+            if cell is None:
+                break
+
+            row, col = cell
+            record = self._create_basic_record(config, row, col, "urban_conv", event_year)
+            records.append(record)
+            used_pixels.add(record["pixel_id"])
+
+        return EventTable("urban_conv", pd.DataFrame(records))
+
+    def _generate_urban_edge_events(self, config, conv_df, reserve_mask, logging_pixels, conv_pixels):
+        edge_year_map = {}
+        edge_position_map = {}
+        block_pixels = set(logging_pixels)
+        for pixel_id in conv_pixels:
+            block_pixels.add(pixel_id)
+
+        for _, row in conv_df.iterrows():
+            conv_row = int(row["row"])
+            conv_col = int(row["col"])
+            conv_year = int(row["y_event"])
+            neighbors = self._get_neighbor_cells(conv_row, conv_col, config.grid_rows, config.grid_cols)
+
+            for neighbor_row, neighbor_col in neighbors:
+                if reserve_mask[neighbor_row, neighbor_col]:
+                    continue
+
+                pixel_id = self._build_pixel_id(config, neighbor_row, neighbor_col)
+                if pixel_id in block_pixels:
+                    continue
+
+                if pixel_id not in edge_year_map:
+                    edge_year_map[pixel_id] = conv_year
+                    edge_position_map[pixel_id] = (neighbor_row, neighbor_col)
+                else:
+                    old_year = edge_year_map[pixel_id]
+                    if conv_year < old_year:
+                        edge_year_map[pixel_id] = conv_year
+                        edge_position_map[pixel_id] = (neighbor_row, neighbor_col)
+
+        records = []
+        for pixel_id in sorted(edge_year_map.keys()):
+            row, col = edge_position_map[pixel_id]
+            event_year = edge_year_map[pixel_id]
+            record = {
+                "pixel_id": pixel_id,
+                "row": row,
+                "col": col,
+                "type": "urban_edge",
+                "y_event": event_year,
+            }
+            records.append(record)
+
+        return EventTable("urban_edge", pd.DataFrame(records))
+
+    def _build_reserve_mask(self, config):
+        mask = np.zeros((config.grid_rows, config.grid_cols), dtype=bool)
+        reserve_ratio = config.reserve_ratio
+        reserve_edge_ratio = math.sqrt(reserve_ratio)
+        reserve_rows = int(config.grid_rows * reserve_edge_ratio)
+        reserve_cols = int(config.grid_cols * reserve_edge_ratio)
+
+        if reserve_rows < 1:
+            reserve_rows = 1
+        if reserve_cols < 1:
+            reserve_cols = 1
+
+        row = 0
+        while row < reserve_rows:
+            col = 0
+            while col < reserve_cols:
+                mask[row, col] = True
+                col += 1
+            row += 1
+
+        right_rows = reserve_rows // 2
+        right_cols = reserve_cols // 2
+        if right_rows < 1:
+            right_rows = 1
+        if right_cols < 1:
+            right_cols = 1
+
+        start_row = config.grid_rows - right_rows
+        start_col = config.grid_cols - right_cols
+        row = start_row
+        while row < config.grid_rows:
+            col = start_col
+            while col < config.grid_cols:
+                mask[row, col] = True
+                col += 1
+            row += 1
+
+        return mask
+
+    def _calculate_event_count(self, base_count, reduction):
+        count = int(base_count * (1 - reduction))
+        if count < 0:
+            count = 0
+        return count
+
+    def _build_urban_centers(self, config, rng, reserve_mask):
+        centers = []
+        center_count = config.urban_center_count
+        if center_count < 1:
+            center_count = 1
+
+        index = 0
+        while index < center_count:
+            cell = self._pick_random_allowed_cell(config, rng, reserve_mask, set())
+            if cell is not None:
+                centers.append(cell)
+            index += 1
+
+        if not centers:
+            center_row = config.grid_rows // 2
+            center_col = config.grid_cols // 2
+            centers.append((center_row, center_col))
+
+        return centers
+
+    def _pick_urban_cell(self, config, rng, reserve_mask, centers, used_pixels):
+        spread = min(config.grid_rows, config.grid_cols) // 10
+        if spread < 4:
+            spread = 4
+
+        try_count = 0
+        while try_count < 80:
+            center_index = int(rng.integers(0, len(centers)))
+            center_row, center_col = centers[center_index]
+            row = int(round(rng.normal(center_row, spread)))
+            col = int(round(rng.normal(center_col, spread)))
+
+            if row < 0 or row >= config.grid_rows:
+                try_count += 1
+                continue
+            if col < 0 or col >= config.grid_cols:
+                try_count += 1
+                continue
+            if reserve_mask[row, col]:
+                try_count += 1
+                continue
+
+            pixel_id = self._build_pixel_id(config, row, col)
+            if pixel_id in used_pixels:
+                try_count += 1
+                continue
+
+            return row, col
+
+        return self._pick_random_allowed_cell(config, rng, reserve_mask, used_pixels)
+
+    def _pick_random_allowed_cell(self, config, rng, reserve_mask, used_pixels):
+        try_count = 0
+        while try_count < 300:
+            row = int(rng.integers(0, config.grid_rows))
+            col = int(rng.integers(0, config.grid_cols))
+            if reserve_mask[row, col]:
+                try_count += 1
+                continue
+
+            pixel_id = self._build_pixel_id(config, row, col)
+            if pixel_id in used_pixels:
+                try_count += 1
+                continue
+
+            return row, col
+
+        return None
+
+    def _build_pixel_id_set(self, records):
+        pixel_ids = set()
+        if records.empty:
+            return pixel_ids
+
+        for pixel_id in records["pixel_id"].tolist():
+            pixel_ids.add(int(pixel_id))
+        return pixel_ids
+
+    def _create_basic_record(self, config, row, col, event_type, year):
+        pixel_id = self._build_pixel_id(config, row, col)
+        return {
+            "pixel_id": pixel_id,
+            "row": row,
+            "col": col,
+            "type": event_type,
+            "y_event": int(year),
+        }
+
+    def _build_pixel_id(self, config, row, col):
+        return row * config.grid_cols + col
+
+    def _get_neighbor_cells(self, row, col, max_rows, max_cols):
+        neighbors = []
+        for row_offset in [-1, 0, 1]:
+            for col_offset in [-1, 0, 1]:
+                if row_offset == 0 and col_offset == 0:
+                    continue
+
+                next_row = row + row_offset
+                next_col = col + col_offset
+                if next_row < 0 or next_row >= max_rows:
+                    continue
+                if next_col < 0 or next_col >= max_cols:
+                    continue
+
+                neighbors.append((next_row, next_col))
+        return neighbors
+
+    def _pick_years(self, future_years, count, speed_shift, rng):
+        if count <= 0:
+            return []
+
+        weights = self._build_year_weights(future_years, speed_shift)
+        raw_years = rng.choice(future_years, size=count, replace=True, p=weights)
+        picked_years = []
+        for raw_year in raw_years:
+            picked_years.append(int(raw_year))
+        return picked_years
+
+    def _build_year_weights(self, future_years, speed_shift):
+        if not future_years:
+            raise ValueError("未来年份列表为空，请把目标年设置为大于基准年的数值。")
+
+        if len(future_years) == 1:
+            return [1.0]
+
+        weights = []
+        last_index = len(future_years) - 1
+        index = 0
+        while index < len(future_years):
+            progress = index / last_index
+            weight = 1.0
+            if speed_shift > 0:
+                weight = weight + progress * speed_shift * 3
+            elif speed_shift < 0:
+                weight = weight + (1 - progress) * abs(speed_shift) * 3
+
+            if weight < 0.1:
+                weight = 0.1
+
+            weights.append(weight)
+            index += 1
+
+        total = sum(weights)
+        normalized_weights = []
+        for weight in weights:
+            normalized_weights.append(weight / total)
+        return normalized_weights
+
+    def _check_config(self, config):
+        if config.target_year <= config.base_year:
+            raise ValueError("目标年必须大于基准年。")
+        if not config.future_years:
+            raise ValueError("未来年份列表为空，请重新保存情景配置。")
+        if config.grid_rows <= 0 or config.grid_cols <= 0:
+            raise ValueError("网格行列数必须大于 0。")
+        if config.reserve_ratio < 0 or config.reserve_ratio >= 0.6:
+            raise ValueError("保育区比例请设置在 0 到 0.6 之间。")
+        if config.logging_patch_min_size <= 0:
+            raise ValueError("采伐斑块最小尺寸必须大于 0。")
+        if config.logging_patch_max_size < config.logging_patch_min_size:
+            raise ValueError("采伐斑块最大尺寸不能小于最小尺寸。")
+        if config.logging_library_years <= 0:
+            raise ValueError("采伐斑块库历史年份数必须大于 0。")
+        if config.logging_library_patch_count <= 0:
+            raise ValueError("采伐斑块库样本数必须大于 0。")
+
+
+class LoggingPatch:
+    def __init__(self, patch_id, source_year, row_offsets, col_offsets):
+        self.patch_id = int(patch_id)
+        self.source_year = int(source_year)
+        self.row_offsets = list(row_offsets)
+        self.col_offsets = list(col_offsets)
+        self.size = len(self.row_offsets)
+
+    def to_dict(self):
+        return {
+            "patch_id": self.patch_id,
+            "source_year": self.source_year,
+            "size": self.size,
+            "row_offsets": list(self.row_offsets),
+            "col_offsets": list(self.col_offsets),
+        }
+
+
+class LoggingPatchLibrary:
+    def __init__(self):
+        self.patches = []
+
+    def build_library(self, config, rng):
+        self.patches = []
+        patch_total = max(1, config.logging_library_patch_count)
+        history_years = self._build_history_years(config)
+
+        patch_id = 1
+        while patch_id <= patch_total:
+            source_year = self._pick_source_year(history_years, rng)
+            patch_size = self._pick_patch_size(config, rng)
+            row_offsets, col_offsets = self._build_patch_offsets(patch_size, rng)
+            patch = LoggingPatch(patch_id, source_year, row_offsets, col_offsets)
+            self.patches.append(patch)
+            patch_id += 1
+
+        return self
+
+    def _build_history_years(self, config):
+        years = []
+        year = config.base_year - config.logging_library_years + 1
+        while year <= config.base_year:
+            years.append(year)
+            year += 1
+        return years
+
+    def _pick_source_year(self, history_years, rng):
+        index = int(rng.integers(0, len(history_years)))
+        return int(history_years[index])
+
+    def _pick_patch_size(self, config, rng):
+        min_size = max(1, config.logging_patch_min_size)
+        max_size = max(min_size, config.logging_patch_max_size)
+        return int(rng.integers(min_size, max_size + 1))
+
+    def _build_patch_offsets(self, patch_size, rng):
+        cells = []
+        cells.append((0, 0))
+
+        while len(cells) < patch_size:
+            base_index = int(rng.integers(0, len(cells)))
+            base_row, base_col = cells[base_index]
+            row_shift = int(rng.integers(-1, 2))
+            col_shift = int(rng.integers(-1, 2))
+            next_row = base_row + row_shift
+            next_col = base_col + col_shift
+
+            if next_row == base_row and next_col == base_col:
+                continue
+
+            exists = False
+            for old_row, old_col in cells:
+                if old_row == next_row and old_col == next_col:
+                    exists = True
+                    break
+
+            if not exists:
+                cells.append((next_row, next_col))
+
+        cells = sorted(cells)
+        row_offsets = []
+        col_offsets = []
+        for row_offset, col_offset in cells:
+            row_offsets.append(int(row_offset))
+            col_offsets.append(int(col_offset))
+        return row_offsets, col_offsets
+
+    def sample_future_events(self, config, rng, reserve_mask, target_count):
+        records = []
+        used_pixels = set()
+        patch_id = 1
+        years = self._pick_future_years(config, rng, target_count)
+
+        while len(records) < target_count:
+            future_year = self._pick_one_future_year(config, years, rng)
+            patch = self._sample_patch_template(rng)
+            if patch is None:
+                break
+
+            placed_cells = self._place_patch(config, rng, patch, reserve_mask, used_pixels)
+            if not placed_cells:
+                continue
+
+            for row, col in placed_cells:
+                pixel_id = row * config.grid_cols + col
+                records.append(
+                    {
+                        "pixel_id": pixel_id,
+                        "row": row,
+                        "col": col,
+                        "type": "logging",
+                        "y_event": future_year,
+                        "patch_id": patch_id,
+                        "patch_size": len(placed_cells),
+                        "source_patch_id": patch.patch_id,
+                        "source_year": patch.source_year,
+                    }
+                )
+                if len(records) >= target_count:
+                    break
+
+            patch_id += 1
+
+        return pd.DataFrame(records)
+
+    def _pick_future_years(self, config, rng, target_count):
+        if target_count <= 0:
+            return []
+
+        weights = self._build_year_weights(config.future_years)
+        raw_years = rng.choice(config.future_years, size=target_count, replace=True, p=weights)
+        years = []
+        for year in raw_years:
+            years.append(int(year))
+        return years
+
+    def _build_year_weights(self, future_years):
+        weights = []
+        for _ in future_years:
+            weights.append(1.0)
+
+        total = sum(weights)
+        normalized_weights = []
+        for weight in weights:
+            normalized_weights.append(weight / total)
+        return normalized_weights
+
+    def _pick_one_future_year(self, config, years, rng):
+        if years:
+            index = int(rng.integers(0, len(years)))
+            return int(years[index])
+        return int(config.base_year + 1)
+
+    def _sample_patch_template(self, rng):
+        if not self.patches:
+            return None
+
+        sizes = self.get_patch_sizes()
+        total_size = float(sum(sizes))
+        weights = []
+        for size in sizes:
+            weights.append(float(size) / total_size)
+
+        patch_indices = np.arange(len(self.patches))
+        index = int(rng.choice(patch_indices, p=weights))
+        return self.patches[index]
+
+    def _place_patch(self, config, rng, patch, reserve_mask, used_pixels):
+        try_count = 0
+        while try_count < 200:
+            seed_row = int(rng.integers(0, config.grid_rows))
+            seed_col = int(rng.integers(0, config.grid_cols))
+            placed_cells = self._convert_offsets_to_cells(config, patch, seed_row, seed_col, reserve_mask, used_pixels)
+            if placed_cells:
+                return placed_cells
+            try_count += 1
+        return []
+
+    def _convert_offsets_to_cells(self, config, patch, seed_row, seed_col, reserve_mask, used_pixels):
+        cells = []
+        index = 0
+        while index < patch.size:
+            row = seed_row + patch.row_offsets[index]
+            col = seed_col + patch.col_offsets[index]
+            if row < 0 or row >= config.grid_rows:
+                return []
+            if col < 0 or col >= config.grid_cols:
+                return []
+            if reserve_mask[row, col]:
+                return []
+
+            pixel_id = row * config.grid_cols + col
+            if pixel_id in used_pixels:
+                return []
+
+            cells.append((row, col))
+            index += 1
+
+        for row, col in cells:
+            pixel_id = row * config.grid_cols + col
+            used_pixels.add(pixel_id)
+        return cells
+
+    def get_patch_sizes(self):
+        sizes = []
+        for patch in self.patches:
+            sizes.append(patch.size)
+        return sizes
+
+    def summary(self):
+        sizes = self.get_patch_sizes()
+        if not sizes:
+            return {
+                "patch_count": 0,
+                "history_year_min": None,
+                "history_year_max": None,
+                "size_min": None,
+                "size_mean": None,
+                "size_max": None,
+            }
+
+        years = []
+        for patch in self.patches:
+            years.append(patch.source_year)
+
+        return {
+            "patch_count": len(self.patches),
+            "history_year_min": min(years),
+            "history_year_max": max(years),
+            "size_min": min(sizes),
+            "size_mean": round(float(np.mean(sizes)), 2),
+            "size_max": max(sizes),
+        }
+
+    def to_frame(self):
+        rows = []
+        for patch in self.patches:
+            rows.append(
+                {
+                    "patch_id": patch.patch_id,
+                    "source_year": patch.source_year,
+                    "size": patch.size,
+                    "row_offsets": str(patch.row_offsets),
+                    "col_offsets": str(patch.col_offsets),
+                }
+            )
+        return pd.DataFrame(rows)
+
+
+class RasterLoggingPatchLibrary(LoggingPatchLibrary):
+    def build_from_mask(self, potential_mask, config):
+        self.patches = []
+        rng = np.random.default_rng(config.base_seed + 17)
+        components = self._find_patch_components(potential_mask, config)
+
+        if not components:
+            self.build_library(config, rng)
+            return self
+
+        if len(components) > config.logging_library_patch_count:
+            picked = rng.choice(len(components), size=config.logging_library_patch_count, replace=False)
+            picked = sorted(picked.tolist())
+        else:
+            picked = list(range(len(components)))
+
+        patch_id = 1
+        for component_index in picked:
+            cells = components[component_index]
+            cells = self._trim_component_cells(cells, config, rng)
+            if not cells:
+                continue
+
+            base_row, base_col = cells[0]
+            row_offsets = []
+            col_offsets = []
+            for row, col in cells:
+                row_offsets.append(int(row - base_row))
+                col_offsets.append(int(col - base_col))
+
+            source_year = config.base_year - int(rng.integers(0, max(config.logging_library_years, 1)))
+            patch = LoggingPatch(patch_id, source_year, row_offsets, col_offsets)
+            self.patches.append(patch)
+            patch_id = patch_id + 1
+
+        if not self.patches:
+            self.build_library(config, rng)
+
+        return self
+
+    def _find_patch_components(self, mask, config):
+        rows, cols = mask.shape
+        visited = np.zeros(mask.shape, dtype=bool)
+        components = []
+
+        for row in range(rows):
+            for col in range(cols):
+                if visited[row, col]:
+                    continue
+                if not mask[row, col]:
+                    visited[row, col] = True
+                    continue
+
+                cells = self._grow_one_component(mask, visited, row, col, rows, cols, config)
+                if len(cells) >= config.logging_patch_min_size:
+                    components.append(cells)
+
+        return components
+
+    def _grow_one_component(self, mask, visited, start_row, start_col, rows, cols, config):
+        stack = [(start_row, start_col)]
+        visited[start_row, start_col] = True
+        cells = []
+        max_keep = max(config.logging_patch_max_size * 4, config.logging_patch_max_size)
+
+        while stack:
+            row, col = stack.pop()
+            cells.append((row, col))
+
+            if len(cells) >= max_keep:
+                continue
+
+
+class SeverityEngine:
+    def assign_all(self, event_tables, config):
+        return [self.assign(table, config) for table in event_tables]
+
+    def assign(self, event_table, config):
+        records = event_table.records.copy()
+        if records.empty:
+            return EventTable(event_table.event_type, records)
+
+        if "Severity" not in records.columns:
+            records["Severity"] = self._build_default_severity(records, event_table.event_type, config)
+
+        records["Severity"] = records["Severity"].astype(float).clip(0.0, 1.0)
+        if "Severity_Class" not in records.columns:
+            records["Severity_Class"] = records["Severity"].apply(self._classify)
+        return EventTable(event_table.event_type, records)
+
+    def _build_default_severity(self, records, event_type, config):
+        seed_offset = {
+            "logging": 301,
+            "urban_conversion": 401,
+            "urban_edge": 501,
+        }.get(event_type, 601)
+        rng = np.random.default_rng(int(config.base_seed) + seed_offset)
+        base = rng.beta(2.0, 3.0, size=len(records))
+        if event_type == "urban_conversion":
+            base = np.maximum(base, 0.62)
+        elif event_type == "urban_edge":
+            base = base * 0.72
+        return base
+
+    def _classify(self, value):
+        value = float(value)
+        if value < 0.33:
+            return "low"
+        if value < 0.66:
+            return "medium"
+        return "high"

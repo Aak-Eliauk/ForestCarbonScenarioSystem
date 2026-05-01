@@ -1,0 +1,29 @@
+02:18:10 [开始] 运行日志已创建：I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\..\ForestCarbonScenarioSystem_outputs\run_logs\20260502_021810_生态保育.log
+02:18:10 [检查输入] 正在读取已保存的配置。
+02:18:10 [准备快速测试] 正在准备快速测试输入。
+02:18:26 [生成事件] 正在生成采伐、城镇转换和边缘扰动事件。
+02:18:27 [等待开始] 运行失败。
+02:18:27 [异常] object of type 'NoneType' has no len()
+Traceback (most recent call last):
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\ui\page_workbench.py", line 519, in _run_with_progress
+    result = run_simulation_workflow(
+        run_config,
+    ...<9 lines>...
+        ),
+    )
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\services\workflow_service.py", line 22, in run_simulation_workflow
+    raw_events = scenario_engine.generate_all_events(config)
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\engines\scenario_engine.py", line 17, in generate_all_events
+    return self._generate_all_events_from_rasters(config)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\engines\scenario_engine.py", line 57, in _generate_all_events_from_rasters
+    logging_events = self._generate_raster_logging_events(config, rng, forest_target, reserve_mask)
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\engines\scenario_engine.py", line 120, in _generate_raster_logging_events
+    patch_library.build_from_mask(potential_mask, config)
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\engines\scenario_engine.py", line 769, in build_from_mask
+    components = self._find_patch_components(potential_mask, config)
+  File "I:\ForestCarbonSoftWork\ForestCarbonScenarioSystem\src\fcscs\engines\scenario_engine.py", line 819, in _find_patch_components
+    if len(cells) >= config.logging_patch_min_size:
+       ~~~^^^^^^^
+TypeError: object of type 'NoneType' has no len()
