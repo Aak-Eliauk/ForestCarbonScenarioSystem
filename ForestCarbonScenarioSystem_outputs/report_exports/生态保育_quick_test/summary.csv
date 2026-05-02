@@ -1,0 +1,25 @@
+﻿metric,label,value
+scenario_name,情景名称,生态保育_quick_test
+n_simulations,模拟次数,3
+grid_rows,网格行数,520
+grid_cols,网格列数,520
+agbd_to_agc_factor,agbd_to_agc_factor,0.47
+pixel_area_ha,pixel_area_ha,1.0
+ml_enabled,ml_enabled,True
+ml_algorithm,ml_algorithm,RandomForestRegressor
+ml_model_count,ml_model_count,4
+data_mode,数据模式,raster
+baseline_agbd_mean,基准 AGBD 均值,160.00634765625
+baseline_agc_mean,基准 AGC 均值,75.2029833984375
+mean_agbd_per_ha,模拟 AGBD 均值,158.86611938476562
+std_agbd_per_ha,模拟 AGBD 标准差,1.8635225296020508
+mean_agc_per_ha,模拟 AGC 均值,74.66707611083984
+std_agc_per_ha,模拟 AGC 标准差,0.8758546113967896
+total_agbd_mean,总 AGBD 均值,42957396.0
+total_agbd_std,总 AGBD 标准差,503895.8125
+total_agc_mean,总 AGC 均值,20189976.0
+total_agc_std,总 AGC 标准差,236831.15625
+mean_reduction_per_ha,平均损失强度,1.6562762260437012
+max_reduction_per_ha,最大损失强度,117.35934448242188
+mean_model_r2,模型 R2 均值,0.9665250000000001
+mean_model_mae,模型 MAE 均值,4.5002249999999995

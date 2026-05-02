@@ -399,6 +399,11 @@ def _render_run_step(config):
     quick_size = 520
     if run_mode == "快速测试" and config.use_raster_data:
         quick_size = st.number_input("测试窗口大小", min_value=128, max_value=1200, value=520, step=64, key="wizard_quick_size")
+    if run_mode == "快速测试":
+        effective_mc = min(int(config.mc_n_simulations), 3)
+        st.caption(f"快速测试会临时使用较小计算量：本次实际蒙特卡洛次数为 {effective_mc} 次；完整运行将使用情景设置的 {int(config.mc_n_simulations)} 次。")
+    else:
+        st.caption(f"完整运行将使用情景设置的蒙特卡洛次数：{int(config.mc_n_simulations)} 次。")
 
     progress_bar, status_table, message_box, log_table = _render_progress_area()
 

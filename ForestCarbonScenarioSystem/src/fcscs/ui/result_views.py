@@ -109,7 +109,7 @@ def _render_uncertainty_cards(distribution_df):
     mean_agbd = _series_or_none(distribution_df, "mean_agbd_per_ha")
 
     cards = [
-        ("MC", "模拟次数", _format_number(len(distribution_df), 0)),
+        ("MC", "实际模拟次数", _format_number(len(distribution_df), 0)),
     ]
     if total_agbd is not None:
         cards.append(("AGBD", "总 AGBD 均值", _format_number(total_agbd.mean(), 2)))
@@ -122,15 +122,13 @@ def _render_uncertainty_cards(distribution_df):
     html_cards = []
     for icon, label, value in cards[:4]:
         html_cards.append(
-            """
-            <div class="uncertainty-card">
-                <div class="uncertainty-icon">{icon}</div>
-                <div>
-                    <div class="uncertainty-label">{label}</div>
-                    <div class="uncertainty-value">{value}</div>
-                </div>
-            </div>
-            """.format(
+            '<div class="uncertainty-card">'
+            '<div class="uncertainty-icon">{icon}</div>'
+            "<div>"
+            '<div class="uncertainty-label">{label}</div>'
+            '<div class="uncertainty-value">{value}</div>'
+            "</div>"
+            "</div>".format(
                 icon=html.escape(str(icon)),
                 label=html.escape(str(label)),
                 value=html.escape(str(value)),

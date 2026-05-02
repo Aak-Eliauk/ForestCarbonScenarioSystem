@@ -61,7 +61,8 @@ def _render_current_result(report, bundle):
     st.caption("来源：当前会话内存结果")
     _render_result_tabs(report, bundle)
 
-    if st.button("保存当前结果到历史结果", type="primary", use_container_width=True, key="save_current_report_history"):
+    st.info("运行成功后系统会自动保存结果。下方按钮用于手动重新保存或覆盖同名历史报告。")
+    if st.button("重新保存当前结果", type="primary", use_container_width=True, key="save_current_report_history"):
         export_dir = get_output_directory(get_config()) / "report_exports" / report.scenario_name
         export_report(report, export_dir)
         st.success("结果已保存到：" + str(export_dir))
