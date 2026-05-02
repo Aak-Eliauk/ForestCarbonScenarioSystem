@@ -3,6 +3,59 @@ from pathlib import Path
 import yaml
 
 
+INVALID_SCENARIO_NAME_CHARS = set('<>:"/\\|?*')
+WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    "COM1",
+    "COM2",
+    "COM3",
+    "COM4",
+    "COM5",
+    "COM6",
+    "COM7",
+    "COM8",
+    "COM9",
+    "LPT1",
+    "LPT2",
+    "LPT3",
+    "LPT4",
+    "LPT5",
+    "LPT6",
+    "LPT7",
+    "LPT8",
+    "LPT9",
+}
+
+
+def sanitize_scenario_name(value, default="BAU", max_length=80):
+    text = str(value).strip()
+    if not text:
+        text = str(default)
+
+    safe_chars = []
+    for char in text:
+        if ord(char) < 32 or char in INVALID_SCENARIO_NAME_CHARS:
+            safe_chars.append("_")
+        else:
+            safe_chars.append(char)
+
+    safe_name = "".join(safe_chars)
+    while ".." in safe_name:
+        safe_name = safe_name.replace("..", "_")
+    safe_name = safe_name.strip(" ._")
+
+    if not safe_name:
+        safe_name = str(default)
+    if safe_name.upper() in WINDOWS_RESERVED_NAMES:
+        safe_name = safe_name + "_scenario"
+    if len(safe_name) > max_length:
+        safe_name = safe_name[:max_length].rstrip(" ._")
+    return safe_name or str(default)
+
+
 class ScenarioConfig:
     def __init__(
         self,
@@ -47,7 +100,7 @@ class ScenarioConfig:
         write_raster_outputs=True,
         output_dir="../ForestCarbonScenarioSystem_outputs",
     ):
-        self.scenario_name = str(scenario_name)
+        self.scenario_name = sanitize_scenario_name(scenario_name)
         self.base_year = int(base_year)
         self.target_year = int(target_year)
         if future_years is None:

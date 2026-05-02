@@ -3,7 +3,7 @@ cd /d "%~dp0"
 
 echo.
 echo Starting Forest Loss Scenario Control and Monte Carlo Carbon Stock Simulation System V1.0...
-echo Short name: Forest Loss Carbon Simulation
+echo Short name: Forest Loss Control Carbon Simulation System
 echo Please keep this terminal window open.
 echo.
 

@@ -1,6 +1,8 @@
 import unittest
 from pathlib import Path
 import sys
+import shutil
+import uuid
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SRC_DIR = PROJECT_ROOT / "src"
@@ -12,15 +14,26 @@ import pandas as pd
 import rasterio
 from rasterio.transform import from_origin
 
+from fcscs import __version__
 from fcscs.config.defaults import ScenarioConfig
-from fcscs.engines.monte_carlo_engine import MonteCarloEngine, ReportEngine
+from fcscs.domain.models import EventTable
+from fcscs.engines.monte_carlo_engine import AGBDModelEngine, MonteCarloEngine, ReportEngine
 from fcscs.engines.scenario_engine import ScenarioEngine, SeverityEngine
 
 
 class FullWorkflowTest(unittest.TestCase):
+    def setUp(self):
+        self._temp_dirs = []
+
+    def tearDown(self):
+        for temp_dir in self._temp_dirs:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def get_test_output_dir(self):
-        root = Path(__file__).resolve().parents[1]
-        output_dir = root.parent / "ForestCarbonScenarioSystem_outputs" / "test_runtime"
+        temp_root = PROJECT_ROOT / ".test_outputs"
+        temp_root.mkdir(parents=True, exist_ok=True)
+        output_dir = temp_root / ("fcscs_test_" + uuid.uuid4().hex)
+        self._temp_dirs.append(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
@@ -58,10 +71,56 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertEqual(loaded.grid_cols, config.grid_cols)
         self.assertEqual(loaded.ml_sample_count, config.ml_sample_count)
 
+    def test_version_uses_registration_label(self):
+        self.assertEqual(__version__, "V1.0")
+
+    def test_scenario_name_is_sanitized_for_file_paths(self):
+        config = ScenarioConfig(scenario_name="../bad/name:one*")
+
+        self.assertEqual(config.scenario_name, "bad_name_one")
+        self.assertNotIn("..", config.scenario_name)
+        self.assertNotIn("/", config.scenario_name)
+        self.assertNotIn(":", config.scenario_name)
+
+        reserved = ScenarioConfig(scenario_name="CON")
+        self.assertEqual(reserved.scenario_name, "CON_scenario")
+
     def test_invalid_year_is_rejected(self):
         config = ScenarioConfig(base_year=2035, target_year=2035)
         with self.assertRaises(ValueError):
             ScenarioEngine().generate_all_events(config)
+
+    def test_logging_generation_rejects_unplaceable_small_grid(self):
+        config = ScenarioConfig(
+            grid_rows=4,
+            grid_cols=4,
+            reserve_ratio=0.0,
+            logging_patch_min_size=20,
+            logging_patch_max_size=20,
+            logging_library_patch_count=5,
+        )
+
+        with self.assertRaisesRegex(ValueError, "采伐事件生成失败"):
+            ScenarioEngine().generate_all_events(config)
+
+    def test_zero_reserve_ratio_has_no_reserved_cells(self):
+        config = ScenarioConfig(grid_rows=8, grid_cols=8, reserve_ratio=0.0)
+
+        reserve_mask = ScenarioEngine()._build_reserve_mask(config)
+
+        self.assertEqual(int(reserve_mask.sum()), 0)
+
+    def test_urban_conv_severity_uses_conversion_floor(self):
+        records = pd.DataFrame(
+            [
+                {"pixel_id": 1, "row": 0, "col": 0, "type": "urban_conv", "y_event": 2025},
+                {"pixel_id": 2, "row": 0, "col": 1, "type": "urban_conv", "y_event": 2026},
+            ]
+        )
+
+        event_table = SeverityEngine().assign(EventTable("urban_conv", records), ScenarioConfig())
+
+        self.assertGreaterEqual(float(event_table.records["Severity"].min()), 0.62)
 
     def test_s1_full_workflow(self):
         config, scenario_engine, events, bundle, report = self.run_complete_flow("S1")
@@ -150,11 +209,13 @@ class FullWorkflowTest(unittest.TestCase):
             lulc_target_raster_path=str(lulc_target_path),
             drivers_raster_path=str(drivers_path),
             reserve_raster_path=str(reserve_path),
+            env_raster_paths="",
             forest_lulc_codes="1",
             urban_lulc_codes="8",
             logging_driver_value=4,
             reserve_value=1,
             pixel_area_ha=1.0,
+            output_dir=str(output_dir),
         )
 
         scenario_engine = ScenarioEngine()
@@ -168,6 +229,53 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertIn("mean_AGBD_tif", bundle.output_files)
         self.assertTrue(Path(bundle.output_files["mean_AGBD_tif"]).exists())
         self.assertTrue(report.output_files)
+
+    def test_raster_shape_mismatch_is_rejected_before_simulation(self):
+        output_dir = self.get_test_output_dir() / "raster_mismatch"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        agbd_path = output_dir / "agbd.tif"
+        tcc_path = output_dir / "tcc.tif"
+        lulc_base_path = output_dir / "lulc_base.tif"
+        lulc_target_path = output_dir / "lulc_target.tif"
+
+        self.write_test_raster(agbd_path, np.ones((20, 20), dtype=np.float32), "float32", -9999.0)
+        self.write_test_raster(tcc_path, np.ones((20, 20), dtype=np.float32), "float32", -9999.0)
+        self.write_test_raster(lulc_base_path, np.ones((20, 20), dtype=np.uint8), "uint8", 255)
+        self.write_test_raster(lulc_target_path, np.ones((21, 20), dtype=np.uint8), "uint8", 255)
+
+        config = ScenarioConfig(
+            use_raster_data=True,
+            agbd_raster_path=str(agbd_path),
+            tcc_raster_path=str(tcc_path),
+            lulc_base_raster_path=str(lulc_base_path),
+            lulc_target_raster_path=str(lulc_target_path),
+            env_raster_paths="",
+        )
+
+        with self.assertRaisesRegex(ValueError, "空间范围不一致"):
+            ScenarioEngine().generate_all_events(config)
+
+    def test_all_nodata_agbd_is_rejected(self):
+        output_dir = self.get_test_output_dir() / "raster_nodata"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        agbd_path = output_dir / "agbd.tif"
+        tcc_path = output_dir / "tcc.tif"
+        nodata = -9999.0
+
+        self.write_test_raster(agbd_path, np.full((10, 10), nodata, dtype=np.float32), "float32", nodata)
+        self.write_test_raster(tcc_path, np.full((10, 10), 0.5, dtype=np.float32), "float32", nodata)
+
+        config = ScenarioConfig(
+            use_raster_data=True,
+            agbd_raster_path=str(agbd_path),
+            tcc_raster_path=str(tcc_path),
+            env_raster_paths="",
+        )
+
+        with self.assertRaisesRegex(ValueError, "AGBD 有效像元不足"):
+            AGBDModelEngine()._build_raster_feature_surfaces(config, np.random.default_rng(1))
 
     def write_test_raster(self, path, data, dtype, nodata):
         profile = {

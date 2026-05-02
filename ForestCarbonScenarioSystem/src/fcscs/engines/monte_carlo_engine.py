@@ -3,12 +3,14 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 
+from fcscs.config.defaults import sanitize_scenario_name
 from fcscs.domain.models import ReportBundle, SimulationBundle
 from fcscs.engines.raster_tools import (
     parse_env_raster_paths,
     path_exists,
     read_raster,
     resolve_output_dir,
+    validate_raster_alignment,
     write_float_raster,
 )
 
@@ -477,6 +479,8 @@ class AGBDModelEngine:
         self._check_raster_inputs_for_prediction(config)
         agbd_pre, profile = read_raster(config.agbd_raster_path, make_float=True)
         tcc_pre, _ = read_raster(config.tcc_raster_path, make_float=True)
+        self._ensure_min_valid_pixels(agbd_pre, "AGBD")
+        self._ensure_min_valid_pixels(tcc_pre, "TCC")
         tcc_pre = self._normalize_percent_surface(tcc_pre)
 
         if agbd_pre.shape != tcc_pre.shape:
@@ -537,15 +541,13 @@ class AGBDModelEngine:
         return result
 
     def _check_raster_inputs_for_prediction(self, config):
-        missing = []
-        if not path_exists(config.agbd_raster_path):
-            missing.append(f"AGBD: {config.agbd_raster_path}")
-        if not path_exists(config.tcc_raster_path):
-            missing.append(f"TCC: {config.tcc_raster_path}")
-
-        if missing:
-            text = "真实栅格预测缺少必要文件：\n" + "\n".join(missing)
-            raise ValueError(text)
+        validate_raster_alignment(
+            [
+                ("AGBD", config.agbd_raster_path),
+                ("TCC", config.tcc_raster_path),
+            ],
+            "真实栅格预测",
+        )
 
     def _load_env_rasters(self, config, expected_shape):
         env_map = {}
@@ -555,6 +557,8 @@ class AGBDModelEngine:
                 continue
             data, _ = read_raster(path, make_float=True)
             if data.shape != expected_shape:
+                continue
+            if not np.isfinite(data).any():
                 continue
             env_map[name] = data
         return env_map
@@ -594,7 +598,8 @@ class AGBDModelEngine:
         return surface
 
     def _build_raster_output_dir(self, config):
-        output_dir = resolve_output_dir(getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")) / "raster_predictions" / config.scenario_name
+        scenario_dir = sanitize_scenario_name(config.scenario_name)
+        output_dir = resolve_output_dir(getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")) / "raster_predictions" / scenario_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
@@ -689,9 +694,14 @@ class AGBDModelEngine:
                 valid_ids.append(row * cols + col)
 
         if not valid_ids:
-            for cell_id in range(rows * cols):
-                valid_ids.append(cell_id)
+            raise ValueError("AGBD/TCC 有效像元不足，无法训练基准预测模型。")
         return np.array(valid_ids, dtype=int)
+
+    def _ensure_min_valid_pixels(self, surface, name, minimum=5):
+        valid_count = int(np.isfinite(surface).sum())
+        required = min(int(surface.size), int(minimum))
+        if valid_count < required:
+            raise ValueError(f"{name} 有效像元不足：至少需要 {required} 个，当前 {valid_count} 个。")
 
     def _build_baseline_target_value(self, agbd_pre, tcc_pre, slope, moisture, accessibility, span, rng):
         growth_part = span * 1.55 + tcc_pre * 15.0 + moisture * 18.0

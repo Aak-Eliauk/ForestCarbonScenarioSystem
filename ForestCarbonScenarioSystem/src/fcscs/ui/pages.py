@@ -8,7 +8,7 @@ from fcscs.ui.styles import apply_base_style
 
 SIDEBAR_PANEL_KEY = "sidebar_panel"
 SOFTWARE_FULL_NAME = "森林损失情景控制与蒙特卡洛碳储量模拟系统 V1.0"
-SOFTWARE_SHORT_NAME = "森林损失碳模拟"
+SOFTWARE_SHORT_NAME = "森林损失控制碳模拟系统"
 
 
 def run_app():
@@ -37,8 +37,8 @@ def render_sidebar():
             <div class="brand-lockup">
                 <div class="brand-mark">FC</div>
                 <div class="brand-copy">
-                    <div class="brand-kicker">采伐控制 · 损失控制</div>
-                    <h1>森林损失<br>碳模拟</h1>
+                    <div class="brand-kicker">森林损失控制碳模拟系统</div>
+                    <h1>森林损失情景控制与蒙特卡洛碳储量模拟系统 V1.0</h1>
                 </div>
             </div>
         </div>

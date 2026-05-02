@@ -1,5 +1,0 @@
-﻿model_name,algorithm,sample_count,train_count,test_count,mae,r2
-baseline,RandomForestRegressor,1200,960,240,3.488,0.9782
-logging,RandomForestRegressor,229,183,46,7.6509,0.9333
-urban_edge,RandomForestRegressor,1200,960,240,3.1984,0.9783
-urban_conv,RandomForestRegressor,1200,960,240,3.6636,0.9763

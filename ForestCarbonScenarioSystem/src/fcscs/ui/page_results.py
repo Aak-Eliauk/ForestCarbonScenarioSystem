@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
+from fcscs.config.defaults import sanitize_scenario_name
 from fcscs.domain.models import ReportBundle
 from fcscs.ui.app_state import get_config, get_report_bundle, get_simulation_bundle
 from fcscs.ui.common import get_output_directory
@@ -63,7 +64,7 @@ def _render_current_result(report, bundle):
 
     st.info("运行成功后系统会自动保存结果。下方按钮用于手动重新保存或覆盖同名历史报告。")
     if st.button("重新保存当前结果", type="primary", use_container_width=True, key="save_current_report_history"):
-        export_dir = get_output_directory(get_config()) / "report_exports" / report.scenario_name
+        export_dir = get_output_directory(get_config()) / "report_exports" / sanitize_scenario_name(report.scenario_name)
         export_report(report, export_dir)
         st.success("结果已保存到：" + str(export_dir))
 
@@ -198,7 +199,7 @@ def _load_export_output_files(export_dir):
     if output_files:
         return output_files
 
-    raster_dir = get_output_directory(get_config()) / "raster_predictions" / export_dir.name
+    raster_dir = get_output_directory(get_config()) / "raster_predictions" / sanitize_scenario_name(export_dir.name)
     return _find_raster_output_files(raster_dir)
 
 

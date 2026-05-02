@@ -3,7 +3,7 @@ Set-Location $ProjectRoot
 
 Write-Host ""
 Write-Host "森林损失情景控制与蒙特卡洛碳储量模拟系统 V1.0"
-Write-Host "简称：森林损失碳模拟"
+Write-Host "简称：森林损失控制碳模拟系统"
 Write-Host "================================================"
 Write-Host "这个窗口就是系统运行终端，请不要关闭。"
 Write-Host ""

@@ -1,10 +1,17 @@
-from fcscs.engines.raster_tools import parse_env_raster_paths, path_exists, resolve_input_path, resolve_output_dir
+from fcscs.config.defaults import sanitize_scenario_name
+from fcscs.engines.raster_tools import (
+    parse_env_raster_paths,
+    path_exists,
+    resolve_input_path,
+    resolve_output_dir,
+    validate_raster_alignment,
+)
 
 
 def build_quick_config(config, quick_size):
     if not config.use_raster_data:
         quick_config = config.copy()
-        quick_config.scenario_name = config.scenario_name + "_quick_test"
+        quick_config.scenario_name = sanitize_scenario_name(config.scenario_name + "_quick_test")
         quick_config.grid_rows = min(config.grid_rows, 96)
         quick_config.grid_cols = min(config.grid_cols, 96)
         quick_config.mc_n_simulations = min(config.mc_n_simulations, 3)
@@ -18,17 +25,24 @@ def build_quick_raster_config(config, quick_size):
     import numpy as np
     import rasterio
 
-    required_paths = [
-        config.agbd_raster_path,
-        config.tcc_raster_path,
-        config.lulc_base_raster_path,
-        config.lulc_target_raster_path,
+    required_items = [
+        ("AGBD", config.agbd_raster_path),
+        ("TCC", config.tcc_raster_path),
+        ("基准年LULC", config.lulc_base_raster_path),
+        ("目标年LULC", config.lulc_target_raster_path),
     ]
-    for item in required_paths:
-        if not path_exists(item):
-            raise ValueError("缺少必要栅格：" + str(item))
+    optional_items = []
+    if path_exists(config.drivers_raster_path):
+        optional_items.append(("Drivers", config.drivers_raster_path))
+    if path_exists(config.reserve_raster_path):
+        optional_items.append(("保护区", config.reserve_raster_path))
+    for name, path_text in parse_env_raster_paths(config.env_raster_paths):
+        if path_exists(path_text):
+            optional_items.append(("环境因子-" + name, path_text))
+    validate_raster_alignment(required_items + optional_items, "快速测试栅格")
 
-    output_dir = resolve_output_dir(config.output_dir) / "quick_test_inputs" / config.scenario_name
+    scenario_dir = sanitize_scenario_name(config.scenario_name)
+    output_dir = resolve_output_dir(config.output_dir) / "quick_test_inputs" / scenario_dir
     output_dir.mkdir(parents=True, exist_ok=True)
 
     agbd_path = resolve_input_path(config.agbd_raster_path)
@@ -63,7 +77,7 @@ def build_quick_raster_config(config, quick_size):
     env_text = _clip_env_rasters(config.env_raster_paths, output_dir, window, rasterio)
 
     quick_config = config.copy()
-    quick_config.scenario_name = config.scenario_name + "_quick_test"
+    quick_config.scenario_name = sanitize_scenario_name(config.scenario_name + "_quick_test")
     quick_config.agbd_raster_path = str(clipped_paths["agbd"])
     quick_config.tcc_raster_path = str(clipped_paths["tcc"])
     quick_config.lulc_base_raster_path = str(clipped_paths["lulc_base"])

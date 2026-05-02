@@ -6,7 +6,7 @@ import traceback
 import pandas as pd
 import streamlit as st
 
-from fcscs.config.defaults import ScenarioConfig, build_preset_config, list_preset_names
+from fcscs.config.defaults import ScenarioConfig, build_preset_config, list_preset_names, sanitize_scenario_name
 from fcscs.engines.raster_tools import parse_env_raster_paths, path_exists
 from fcscs.services.quick_run_service import build_quick_config
 from fcscs.services.workflow_service import run_simulation_workflow
@@ -353,7 +353,7 @@ def _render_scenario_step(current):
                 return
 
             new_config = current.copy()
-            new_config.scenario_name = scenario_name.strip() or "BAU"
+            new_config.scenario_name = sanitize_scenario_name(scenario_name)
             new_config.base_year = int(base_year)
             new_config.target_year = int(target_year)
             new_config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
@@ -490,7 +490,7 @@ def _run_with_progress(config, run_mode, quick_size, progress_bar, status_table,
         set_logging_patch_library(result.patch_library)
         set_simulation_bundle(result.simulation_bundle)
         set_report_bundle(result.report_bundle)
-        export_dir = get_output_directory(config) / "report_exports" / result.report_bundle.scenario_name
+        export_dir = get_output_directory(config) / "report_exports" / sanitize_scenario_name(result.report_bundle.scenario_name)
         export_report(result.report_bundle, export_dir)
 
         _add_history_from_bundle(result.simulation_bundle, run_label)
@@ -557,7 +557,7 @@ def _start_run_log(config):
     log_dir = get_output_directory(config) / "run_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = log_dir / (timestamp + "_" + config.scenario_name + ".log")
+    log_path = log_dir / (timestamp + "_" + sanitize_scenario_name(config.scenario_name) + ".log")
     st.session_state[RUN_LOG_PATH_KEY] = str(log_path)
     _append_run_log(log_path, "开始", "运行日志已创建：" + str(log_path))
     return log_path

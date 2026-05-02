@@ -4,7 +4,14 @@ import numpy as np
 import pandas as pd
 
 from fcscs.domain.models import EventTable
-from fcscs.engines.raster_tools import parse_code_list, path_exists, read_raster, rasterio_is_available
+from fcscs.engines.raster_tools import (
+    parse_code_list,
+    parse_env_raster_paths,
+    path_exists,
+    read_raster,
+    rasterio_is_available,
+    validate_raster_alignment,
+)
 
 
 class ScenarioEngine:
@@ -83,17 +90,21 @@ class ScenarioEngine:
             raise ValueError("当前环境缺少 rasterio，不能读取 GeoTIFF 栅格。")
 
         required_items = [
+            ("AGBD", config.agbd_raster_path),
+            ("TCC", config.tcc_raster_path),
             ("基准年LULC", config.lulc_base_raster_path),
             ("目标年LULC", config.lulc_target_raster_path),
         ]
-        missing = []
-        for name, path in required_items:
-            if not path_exists(path):
-                missing.append(f"{name}: {path}")
+        optional_items = []
+        if path_exists(config.drivers_raster_path):
+            optional_items.append(("Drivers", config.drivers_raster_path))
+        if path_exists(config.reserve_raster_path):
+            optional_items.append(("保护区", config.reserve_raster_path))
+        for name, path_text in parse_env_raster_paths(config.env_raster_paths):
+            if path_exists(path_text):
+                optional_items.append(("环境因子-" + name, path_text))
 
-        if missing:
-            text = "真实栅格模式缺少必要文件：\n" + "\n".join(missing)
-            raise ValueError(text)
+        validate_raster_alignment(required_items + optional_items, "真实栅格模式")
 
     def _build_raster_reserve_mask(self, config, shape):
         if path_exists(config.reserve_raster_path):
@@ -303,6 +314,8 @@ class ScenarioEngine:
     def _build_reserve_mask(self, config):
         mask = np.zeros((config.grid_rows, config.grid_cols), dtype=bool)
         reserve_ratio = config.reserve_ratio
+        if reserve_ratio <= 0:
+            return mask
         reserve_edge_ratio = math.sqrt(reserve_ratio)
         reserve_rows = int(config.grid_rows * reserve_edge_ratio)
         reserve_cols = int(config.grid_cols * reserve_edge_ratio)
@@ -604,9 +617,16 @@ class LoggingPatchLibrary:
         records = []
         used_pixels = set()
         patch_id = 1
-        years = self._pick_future_years(config, rng, target_count)
+        target_count = min(max(int(target_count), 0), self._available_cell_count(reserve_mask))
+        if target_count <= 0:
+            return pd.DataFrame(records)
 
-        while len(records) < target_count:
+        years = self._pick_future_years(config, rng, target_count)
+        max_attempts = max(target_count * 30, len(self.patches) * 20, 300)
+        attempts = 0
+
+        while len(records) < target_count and attempts < max_attempts:
+            attempts += 1
             future_year = self._pick_one_future_year(config, years, rng)
             patch = self._sample_patch_template(rng)
             if patch is None:
@@ -636,7 +656,17 @@ class LoggingPatchLibrary:
 
             patch_id += 1
 
+        if len(records) < target_count:
+            raise ValueError(
+                "采伐事件生成失败：可用网格不足或斑块尺寸过大，"
+                f"目标像元 {target_count}，已放置 {len(records)}。"
+            )
         return pd.DataFrame(records)
+
+    def _available_cell_count(self, reserve_mask):
+        if reserve_mask is None:
+            return 0
+        return int(reserve_mask.size - reserve_mask.sum())
 
     def _pick_future_years(self, config, rng, target_count):
         if target_count <= 0:
@@ -878,12 +908,13 @@ class SeverityEngine:
     def _build_default_severity(self, records, event_type, config):
         seed_offset = {
             "logging": 301,
+            "urban_conv": 401,
             "urban_conversion": 401,
             "urban_edge": 501,
         }.get(event_type, 601)
         rng = np.random.default_rng(int(config.base_seed) + seed_offset)
         base = rng.beta(2.0, 3.0, size=len(records))
-        if event_type == "urban_conversion":
+        if event_type in {"urban_conv", "urban_conversion"}:
             base = np.maximum(base, 0.62)
         elif event_type == "urban_edge":
             base = base * 0.72

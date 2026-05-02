@@ -103,11 +103,12 @@ def apply_base_style():
         }
 
         [data-testid="stSidebar"] h1 {
-            font-size: 1.18rem;
-            line-height: 1.24;
+            font-size: 0.95rem;
+            line-height: 1.32;
             letter-spacing: 0;
             margin: 0;
             padding: 0;
+            overflow-wrap: anywhere;
         }
 
         .sidebar-brand {

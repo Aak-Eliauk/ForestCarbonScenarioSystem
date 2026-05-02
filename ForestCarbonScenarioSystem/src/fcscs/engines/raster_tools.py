@@ -74,6 +74,54 @@ def read_raster(path_text, make_float=False):
     return data, profile
 
 
+def read_raster_metadata(path_text):
+    import rasterio
+
+    path = resolve_input_path(path_text)
+    with rasterio.open(path) as src:
+        transform = tuple(round(float(value), 9) for value in src.transform)
+        crs_text = None
+        if src.crs is not None:
+            crs_text = src.crs.to_string()
+        return {
+            "path": path,
+            "shape": (int(src.height), int(src.width)),
+            "transform": transform,
+            "crs": crs_text,
+        }
+
+
+def validate_raster_alignment(items, context="栅格"):
+    metadata = []
+    missing = []
+    for name, path_text in items:
+        if not path_exists(path_text):
+            missing.append(f"{name}: {path_text}")
+            continue
+        metadata.append((name, read_raster_metadata(path_text)))
+
+    if missing:
+        raise ValueError(context + "缺少必要文件：\n" + "\n".join(missing))
+    if len(metadata) <= 1:
+        return metadata
+
+    reference_name, reference = metadata[0]
+    problems = []
+    for name, item in metadata[1:]:
+        if item["shape"] != reference["shape"]:
+            problems.append(
+                f"{name} 尺寸 {item['shape']} 与 {reference_name} 尺寸 {reference['shape']} 不一致。"
+            )
+        if item["crs"] != reference["crs"]:
+            problems.append(f"{name} 坐标系与 {reference_name} 不一致。")
+        if item["transform"] != reference["transform"]:
+            problems.append(f"{name} 空间变换与 {reference_name} 不一致。")
+
+    if problems:
+        raise ValueError(context + "空间范围不一致：\n" + "\n".join(problems))
+    return metadata
+
+
 def write_float_raster(path_text, data, reference_profile, nodata=-9999.0):
     import rasterio
 
