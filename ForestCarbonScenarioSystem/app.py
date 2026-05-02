@@ -10,8 +10,23 @@ SRC_DIR = ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-from fcscs.ui.pages import run_app
+
+def _is_streamlit_runtime():
+    try:
+        from streamlit.runtime.scriptrunner import get_script_run_ctx
+    except Exception:
+        return False
+    return get_script_run_ctx(suppress_warning=True) is not None
 
 
 if __name__ == "__main__":
-    run_app()
+    if _is_streamlit_runtime():
+        from fcscs.ui.pages import run_app
+
+        run_app()
+    else:
+        print("请使用以下任一方式启动系统：")
+        print("  python run_system.py")
+        print("  streamlit run app.py")
+        print("")
+        print("直接执行 python app.py 不会启动 Streamlit 网页服务。")

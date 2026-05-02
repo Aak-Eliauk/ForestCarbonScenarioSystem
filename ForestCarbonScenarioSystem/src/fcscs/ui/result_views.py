@@ -1,8 +1,17 @@
+import html
+
 import pandas as pd
 import streamlit as st
 
 from fcscs.ui.raster_preview import render_raster_preview
 
+
+CHART_LABELS = {
+    "mean_agbd_per_ha": "平均 AGBD",
+    "mean_agc_per_ha": "平均 AGC",
+    "total_agbd": "总量 AGBD",
+    "total_agc": "总量 AGC",
+}
 
 OUTPUT_FILE_NAMES = {
     "mean_AGBD_tif": "平均 AGBD 栅格",
@@ -57,26 +66,78 @@ def render_distribution_charts(report):
         st.info("暂无蒙特卡洛分布结果。")
         return
 
+    _render_uncertainty_cards(report.total_distribution_df)
+
     chart_df = report.total_distribution_df
-    if "sim_id" in chart_df.columns:
+    if "simulation" in chart_df.columns:
+        chart_df = chart_df.set_index("simulation")
+    elif "sim_id" in chart_df.columns:
         chart_df = chart_df.set_index("sim_id")
 
-    c1, c2 = st.columns(2)
-    with c1:
-        mean_columns = ["mean_agbd_per_ha", "mean_agc_per_ha"]
-        if _has_columns(chart_df, mean_columns):
-            st.caption("平均 AGBD / AGC")
-            st.line_chart(chart_df[mean_columns])
-    with c2:
-        total_columns = ["total_agbd", "total_agc"]
-        if _has_columns(chart_df, total_columns):
-            st.caption("总量 AGBD / AGC")
-            st.line_chart(chart_df[total_columns])
+    chart_specs = []
+    mean_columns = ["mean_agbd_per_ha", "mean_agc_per_ha"]
+    if _has_columns(chart_df, mean_columns):
+        chart_specs.append(("平均碳储量变化", mean_columns))
+
+    total_columns = ["total_agbd", "total_agc"]
+    if _has_columns(chart_df, total_columns):
+        chart_specs.append(("总量碳储量变化", total_columns))
+
+    if chart_specs:
+        st.subheader("分布图表")
+        columns = st.columns(min(2, len(chart_specs)))
+        for index, (title, column_names) in enumerate(chart_specs):
+            with columns[index % len(columns)]:
+                st.markdown(f"**{title}**")
+                st.line_chart(_label_chart_columns(chart_df, column_names), use_container_width=True)
+    else:
+        st.info("当前分布表缺少可绘图的数值列。")
 
     _render_distribution_summary(report.total_distribution_df)
 
     with st.expander("每次模拟明细"):
         st.dataframe(report.total_distribution_df, use_container_width=True, hide_index=True)
+
+
+def _render_uncertainty_cards(distribution_df):
+    numeric_columns = [column for column in ["total_agbd", "total_agc", "mean_agbd_per_ha", "mean_agc_per_ha"] if column in distribution_df.columns]
+    if not numeric_columns:
+        return
+
+    total_agbd = _series_or_none(distribution_df, "total_agbd")
+    total_agc = _series_or_none(distribution_df, "total_agc")
+    mean_agbd = _series_or_none(distribution_df, "mean_agbd_per_ha")
+
+    cards = [
+        ("MC", "模拟次数", _format_number(len(distribution_df), 0)),
+    ]
+    if total_agbd is not None:
+        cards.append(("AGBD", "总 AGBD 均值", _format_number(total_agbd.mean(), 2)))
+        cards.append(("P05-P95", "总 AGBD 区间", _format_range(total_agbd)))
+    if total_agc is not None:
+        cards.append(("AGC", "总 AGC 均值", _format_number(total_agc.mean(), 2)))
+    elif mean_agbd is not None:
+        cards.append(("MEAN", "平均 AGBD 均值", _format_number(mean_agbd.mean(), 3)))
+
+    html_cards = []
+    for icon, label, value in cards[:4]:
+        html_cards.append(
+            """
+            <div class="uncertainty-card">
+                <div class="uncertainty-icon">{icon}</div>
+                <div>
+                    <div class="uncertainty-label">{label}</div>
+                    <div class="uncertainty-value">{value}</div>
+                </div>
+            </div>
+            """.format(
+                icon=html.escape(str(icon)),
+                label=html.escape(str(label)),
+                value=html.escape(str(value)),
+            )
+        )
+
+    st.markdown('<div class="uncertainty-card-grid">' + "".join(html_cards) + "</div>", unsafe_allow_html=True)
 
 
 def render_output_files(output_files):
@@ -168,6 +229,35 @@ def _render_distribution_summary(distribution_df):
     display_columns = ["指标", "均值", "标准差", "5%分位", "中位数", "95%分位"]
     st.subheader("分布摘要")
     st.dataframe(summary[display_columns], use_container_width=True, hide_index=True)
+
+
+def _label_chart_columns(frame, column_names):
+    chart_frame = frame[column_names].copy()
+    chart_frame = chart_frame.rename(columns=CHART_LABELS)
+    return chart_frame
+
+
+def _series_or_none(frame, column_name):
+    if column_name not in frame.columns:
+        return None
+    series = pd.to_numeric(frame[column_name], errors="coerce").dropna()
+    if series.empty:
+        return None
+    return series
+
+
+def _format_range(series):
+    low = series.quantile(0.05)
+    high = series.quantile(0.95)
+    return _format_number(low, 2) + " - " + _format_number(high, 2)
+
+
+def _format_number(value, digits=2):
+    if pd.isna(value):
+        return "无数据"
+    if digits <= 0:
+        return f"{float(value):,.0f}"
+    return f"{float(value):,.{digits}f}"
 
 
 def _has_columns(frame, names):

@@ -22,14 +22,7 @@ from fcscs.ui.app_state import (
     set_simulation_bundle,
 )
 from fcscs.ui.common import get_output_directory
-from fcscs.ui.result_views import (
-    export_report,
-    render_detail_tables,
-    render_distribution_charts,
-    render_output_files,
-    render_result_maps,
-    render_result_overview,
-)
+from fcscs.ui.result_views import export_report
 from fcscs.ui.styles import render_page_banner
 
 
@@ -44,7 +37,6 @@ WIZARD_STEPS = [
     ("data", "数据准备"),
     ("scenario", "情景方案"),
     ("run", "运行检查"),
-    ("results", "结果查看"),
 ]
 
 
@@ -58,10 +50,8 @@ def render_workbench_page():
         _render_data_step(config)
     elif step_index == 1:
         _render_scenario_step(config)
-    elif step_index == 2:
-        _render_run_step(config)
     else:
-        _render_result_step()
+        _render_run_step(config)
 
 
 def _ensure_wizard_state():
@@ -127,8 +117,8 @@ def _build_step_labels(config):
     data_ok = _data_ready(config)
     scenario_ok = _scenario_ready(config)
     current_step = int(st.session_state[WIZARD_STEP_KEY])
-    result_ok = get_report_bundle() is not None
-    completed = [data_ok, scenario_ok, result_ok, result_ok]
+    run_ok = get_report_bundle() is not None
+    completed = [data_ok, scenario_ok, run_ok]
 
     labels = []
     for index, (_, label) in enumerate(WIZARD_STEPS):
@@ -433,53 +423,15 @@ def _render_run_step(config):
         _render_run_complete_actions()
 
 
-def _render_result_step(report, bundle):
-    st.subheader("4 结果分析")
-    if report is None or bundle is None:
-        st.info("暂无运行结果，请先完成模拟。")
-        return
-
-    overview_tab, map_tab, distribution_tab, output_tab, detail_tab = st.tabs(
-        ["结果概览", "空间图层", "分布图表", "输出文件", "明细表格"]
-    )
-    with overview_tab:
-        render_result_overview(report, bundle)
-    with map_tab:
-        render_result_maps(report.output_files)
-    with distribution_tab:
-        render_distribution_charts(report)
-    with output_tab:
-        render_output_files(report.output_files)
-    with detail_tab:
-        render_detail_tables(report)
-
-    c_back, c_again, c_export = st.columns(3)
-    with c_back:
-        if st.button("调整情景", use_container_width=True, key="wizard_adjust_scenario"):
-            _go_to_step(1)
-    with c_again:
-        if st.button("再次运行", use_container_width=True, key="wizard_run_again"):
-
-
-
-
-
-            _go_to_step(2)
-    with c_export:
-        if st.button("导出结果", type="primary", use_container_width=True, key="wizard_export_report"):
-            export_dir = get_output_directory(get_config()) / "report_exports" / report.scenario_name
-            export_report(report, export_dir)
-            st.success("结果已导出到：" + str(export_dir))
-
-
 def _render_run_complete_actions():
-    st.success("运行已完成。进度条会保留在本页，确认完成后可以进入结果查看。")
+    st.success("运行已完成。结果已经自动保存，可以进入结果查看。")
     c_keep, c_result = st.columns([1, 2])
     with c_keep:
         st.caption("需要重新运行时，可以调整上方运行方式后再次点击开始运行。")
     with c_result:
         if st.button("查看结果", type="primary", use_container_width=True, key="wizard_go_to_results_after_run"):
-            _go_to_step(3)
+            st.session_state["sidebar_panel"] = "results"
+            st.rerun()
 
 
 def _render_progress_area():
@@ -533,9 +485,11 @@ def _run_with_progress(config, run_mode, quick_size, progress_bar, status_table,
         set_logging_patch_library(result.patch_library)
         set_simulation_bundle(result.simulation_bundle)
         set_report_bundle(result.report_bundle)
+        export_dir = get_output_directory(config) / "report_exports" / result.report_bundle.scenario_name
+        export_report(result.report_bundle, export_dir)
 
         _add_history_from_bundle(result.simulation_bundle, run_label)
-        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 100, "完成", "运行完成，可以查看结果。")
+        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 100, "完成", "运行完成，结果已保存，可以查看结果。")
     except ValueError as error:
         _update_progress(progress_bar, status_table, message_box, log_table, log_path, 0, "等待开始", "运行前检查失败。")
         _record_error(log_path, error)

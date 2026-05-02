@@ -906,10 +906,14 @@ class ReportEngine:
 
     def _build_total_distribution_df(self, bundle):
         stack = bundle.sim_stack
+        mean_agbd = np.nanmean(stack, axis=(1, 2))
+        mean_agc = mean_agbd * float(bundle.summary.get("agbd_to_agc_factor", 0.47))
         totals = np.nansum(stack * float(bundle.summary.get("pixel_area_ha", 1.0)), axis=(1, 2))
         return pd.DataFrame(
             {
                 "simulation": np.arange(1, len(totals) + 1, dtype=int),
+                "mean_agbd_per_ha": mean_agbd.astype(float),
+                "mean_agc_per_ha": mean_agc.astype(float),
                 "total_agbd": totals.astype(float),
                 "total_agc": totals.astype(float) * float(bundle.summary.get("agbd_to_agc_factor", 0.47)),
             }
@@ -917,6 +921,13 @@ class ReportEngine:
 
     def _build_metrics(self, summary):
         return {
+            "平均AGBD": summary.get("mean_agbd_per_ha"),
+            "平均AGC": summary.get("mean_agc_per_ha"),
+            "总AGBD": summary.get("total_agbd_mean"),
+            "总AGC": summary.get("total_agc_mean"),
+            "平均损失强度": summary.get("mean_reduction_per_ha"),
+            "模型R2": summary.get("mean_model_r2"),
+            "模型MAE": summary.get("mean_model_mae"),
             "mean_agbd_per_ha": summary.get("mean_agbd_per_ha"),
             "mean_agc_per_ha": summary.get("mean_agc_per_ha"),
             "total_agbd_mean": summary.get("total_agbd_mean"),

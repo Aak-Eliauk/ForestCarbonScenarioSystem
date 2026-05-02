@@ -834,6 +834,29 @@ class RasterLoggingPatchLibrary(LoggingPatchLibrary):
             if len(cells) >= max_keep:
                 continue
 
+            for row_delta, col_delta in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
+                next_row = row + row_delta
+                next_col = col + col_delta
+                if next_row < 0 or next_row >= rows or next_col < 0 or next_col >= cols:
+                    continue
+                if visited[next_row, next_col]:
+                    continue
+                visited[next_row, next_col] = True
+                if mask[next_row, next_col]:
+                    stack.append((next_row, next_col))
+
+        return cells
+
+    def _trim_component_cells(self, cells, config, rng):
+        if len(cells) <= config.logging_patch_max_size:
+            return cells
+
+        indexes = np.arange(len(cells))
+        rng.shuffle(indexes)
+        picked = indexes[: config.logging_patch_max_size]
+        picked = sorted(picked.tolist())
+        return [cells[index] for index in picked]
+
 
 class SeverityEngine:
     def assign_all(self, event_tables, config):
