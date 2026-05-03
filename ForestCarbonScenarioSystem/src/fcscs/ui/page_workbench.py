@@ -158,25 +158,44 @@ def _render_data_step(current):
             tcc_raster_path = _raster_path_input("TCC 树冠覆盖", current.tcc_raster_path, project_rasters, "wizard_tcc")
             lulc_target_raster_path = _raster_path_input("目标年 LULC", current.lulc_target_raster_path, project_rasters, "wizard_lulc_target")
 
-        st.markdown("**可选栅格**")
+        st.markdown("**扰动与约束栅格**")
         c3, c4 = st.columns(2)
         with c3:
             drivers_raster_path = _raster_path_input("Drivers 扰动来源", current.drivers_raster_path, project_rasters, "wizard_drivers")
         with c4:
             reserve_raster_path = _raster_path_input("保护区", current.reserve_raster_path, project_rasters, "wizard_reserve")
 
-        selected_env_paths = st.multiselect(
-            "环境因子",
-            project_rasters,
-            default=_find_existing_env_defaults(current.env_raster_paths, project_rasters),
-            key="wizard_env_select",
-        )
-        env_raster_paths = st.text_area(
-            "环境因子路径",
-            value=current.env_raster_paths,
-            height=90,
-            key="wizard_env_text",
-        )
+        c5, c6 = st.columns(2)
+        with c5:
+            logging_driver_value = st.number_input("采伐 Drivers 编码", value=current.logging_driver_value, step=1, key="wizard_logging_value")
+        with c6:
+            reserve_value = st.number_input("保护区编码", value=current.reserve_value, step=1, key="wizard_reserve_value")
+
+        st.markdown("**环境因子栅格**")
+        terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
+        climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
+        human_path = _get_env_path_by_role(current.env_raster_paths, "human")
+        env_extra_text = _get_extra_env_text(current.env_raster_paths)
+
+        e1, e2, e3 = st.columns(3)
+        with e1:
+            terrain_path = _raster_path_input("地形因子", terrain_path, project_rasters, "wizard_env_terrain")
+            st.caption("输入坡度、高程、地形起伏度等栅格，推荐使用坡度。")
+        with e2:
+            climate_path = _raster_path_input("气候水分因子", climate_path, project_rasters, "wizard_env_climate")
+            st.caption("输入年降水量、平均降水量、实际蒸散量、湿度等栅格。")
+        with e3:
+            human_path = _raster_path_input("人为活动因子", human_path, project_rasters, "wizard_env_human")
+            st.caption("输入道路距离、居民点距离、城镇距离、可达性、人口密度等栅格。")
+
+        with st.expander("其他环境因子"):
+            env_extra_text = st.text_area(
+                "其他环境因子路径",
+                value=env_extra_text,
+                height=80,
+                key="wizard_env_extra_text",
+                placeholder="soil=I:/data/soil.tif\naspect=I:/data/aspect.tif",
+            )
 
         _render_required_path_status(
             [
@@ -188,15 +207,11 @@ def _render_data_step(current):
         )
 
         with st.expander("高级数据设置"):
-            c5, c6, c7, c8 = st.columns(4)
-            with c5:
-                forest_lulc_codes = st.text_input("森林 LULC 编码", value=current.forest_lulc_codes, key="wizard_forest_codes")
-            with c6:
-                urban_lulc_codes = st.text_input("城镇 LULC 编码", value=current.urban_lulc_codes, key="wizard_urban_codes")
+            c7, c8 = st.columns(2)
             with c7:
-                logging_driver_value = st.number_input("采伐 Drivers 编码", value=current.logging_driver_value, step=1, key="wizard_logging_value")
+                forest_lulc_codes = st.text_input("森林 LULC 编码", value=current.forest_lulc_codes, key="wizard_forest_codes")
             with c8:
-                reserve_value = st.number_input("保护区编码", value=current.reserve_value, step=1, key="wizard_reserve_value")
+                urban_lulc_codes = st.text_input("城镇 LULC 编码", value=current.urban_lulc_codes, key="wizard_urban_codes")
             write_raster_outputs = st.checkbox("输出 GeoTIFF", value=current.write_raster_outputs, key="wizard_write_tif")
 
         grid_rows = current.grid_rows
@@ -208,8 +223,10 @@ def _render_data_step(current):
         lulc_target_raster_path = current.lulc_target_raster_path
         drivers_raster_path = current.drivers_raster_path
         reserve_raster_path = current.reserve_raster_path
-        env_raster_paths = current.env_raster_paths
-        selected_env_paths = []
+        terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
+        climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
+        human_path = _get_env_path_by_role(current.env_raster_paths, "human")
+        env_extra_text = _get_extra_env_text(current.env_raster_paths)
         forest_lulc_codes = current.forest_lulc_codes
         urban_lulc_codes = current.urban_lulc_codes
         logging_driver_value = current.logging_driver_value
@@ -229,7 +246,7 @@ def _render_data_step(current):
             st.rerun()
     with c_save:
         if st.button("保存数据并继续", type="primary", use_container_width=True, key="wizard_save_data"):
-            env_raster_paths = _merge_env_paths(env_raster_paths, selected_env_paths)
+            env_raster_paths = _build_env_raster_text(terrain_path, climate_path, human_path, env_extra_text)
             missing = []
             if use_raster_data:
                 missing = _find_required_missing(
@@ -793,37 +810,96 @@ def _should_skip_path(path):
     return False
 
 
-def _find_existing_env_defaults(env_text, project_rasters):
-    defaults = []
+def _get_env_path_by_role(env_text, role):
     env_items = parse_env_raster_paths(env_text)
-    for _, path_text in env_items:
-        normalized = str(path_text).replace("\\", "/")
-        if normalized in project_rasters:
-            defaults.append(normalized)
-    return defaults
+    candidate_words = _env_candidate_words(role)
+
+    for name, path_text in env_items:
+        text = (str(name) + " " + str(path_text)).lower()
+        for word in candidate_words:
+            if word.lower() in text:
+                return str(path_text)
+
+    return ""
 
 
-def _merge_env_paths(text_value, selected_paths):
+def _get_extra_env_text(env_text):
+    lines = []
+    env_items = parse_env_raster_paths(env_text)
+    fixed_paths = {
+        _get_env_path_by_role(env_text, "terrain"),
+        _get_env_path_by_role(env_text, "climate"),
+        _get_env_path_by_role(env_text, "human"),
+    }
+    fixed_names = {"slope", "moisture", "accessibility"}
+
+    for name, path_text in env_items:
+        clean_name = str(name).strip()
+        clean_path = str(path_text).strip()
+        if clean_name.lower() in fixed_names:
+            continue
+        if clean_path in fixed_paths:
+            continue
+        lines.append(clean_name + "=" + clean_path)
+    return "\n".join(lines)
+
+
+def _build_env_raster_text(terrain_path, climate_path, human_path, extra_text):
     lines = []
 
-    for line in str(text_value).splitlines():
-        clean_line = line.strip()
-        if clean_line:
-            lines.append(clean_line)
+    terrain_path = str(terrain_path).strip()
+    climate_path = str(climate_path).strip()
+    human_path = str(human_path).strip()
 
-    existing_paths = set()
-    for _, path_text in parse_env_raster_paths("\n".join(lines)):
-        existing_paths.add(str(path_text).replace("\\", "/"))
+    if terrain_path:
+        lines.append("slope=" + terrain_path)
+    if climate_path:
+        lines.append("moisture=" + climate_path)
+    if human_path:
+        lines.append("accessibility=" + human_path)
 
-    for path_text in selected_paths:
-        normalized = str(path_text).replace("\\", "/")
-        if normalized in existing_paths:
+    extra_items = parse_env_raster_paths(extra_text)
+    existing_names = {"slope", "moisture", "accessibility"}
+    existing_paths = {terrain_path, climate_path, human_path}
+    for name, path_text in extra_items:
+        clean_name = str(name).strip()
+        clean_path = str(path_text).strip()
+        if not clean_name or not clean_path:
             continue
-        name = Path(normalized).stem
-        lines.append(name + "=" + normalized)
-        existing_paths.add(normalized)
+        if clean_name.lower() in existing_names:
+            continue
+        if clean_path in existing_paths:
+            continue
+        lines.append(clean_name + "=" + clean_path)
+        existing_paths.add(clean_path)
 
     return "\n".join(lines)
+
+
+def _env_candidate_words(role):
+    if role == "terrain":
+        return ["slope", "terrain", "elevation", "dem", "relief", "地形", "坡度", "高程", "起伏"]
+    if role == "climate":
+        return ["moisture", "map", "aet", "precip", "rain", "humidity", "water", "气候", "水分", "降水", "湿度", "蒸散"]
+    if role == "human":
+        return [
+            "accessibility",
+            "distroadnet",
+            "distance",
+            "road",
+            "urban",
+            "settlement",
+            "population",
+            "human",
+            "可达",
+            "距离",
+            "道路",
+            "居民",
+            "城镇",
+            "人口",
+            "人为",
+        ]
+    return []
 
 
 def _find_required_missing(agbd_path, tcc_path, lulc_base_path, lulc_target_path):
@@ -887,7 +963,7 @@ def _clear_data_widget_state():
         if key.startswith("wizard_") and (
             key.endswith("_path_text")
             or key.endswith("_project_select")
-            or key in {"wizard_data_mode", "wizard_output_dir_path_text", "wizard_env_select", "wizard_env_text"}
+            or key in {"wizard_data_mode", "wizard_output_dir_path_text", "wizard_env_extra_text"}
         ):
             del st.session_state[key]
 
