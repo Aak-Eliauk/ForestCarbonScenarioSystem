@@ -30,6 +30,16 @@ WINDOWS_RESERVED_NAMES = {
 }
 
 
+DEFAULT_HISTORY_YEARS = [2017, 2018, 2019, 2020, 2021, 2022]
+
+
+def build_default_year_paths(folder_name, file_prefix):
+    lines = []
+    for year in DEFAULT_HISTORY_YEARS:
+        lines.append(f"{year}=../data/{folder_name}/{file_prefix}_{year}.tif")
+    return "\n".join(lines)
+
+
 def sanitize_scenario_name(value, default="BAU", max_length=80):
     text = str(value).strip()
     if not text:
@@ -83,18 +93,38 @@ class ScenarioConfig:
         agbd_to_agc_factor=0.47,
         pixel_area_ha=1.0,
         ml_sample_count=3000,
-        ml_n_estimators=40,
-        ml_max_depth=8,
-        use_raster_data=False,
+        ml_n_estimators=60,
+        ml_max_depth=10,
+        use_history_training=True,
+        history_agbd_paths=None,
+        history_tcc_paths=None,
+        history_lulc_paths=None,
+        use_driver_sample_weight=True,
+        logging_probability_band=2,
+        urban_probability_band=3,
+        driver_probability_scale=250.0,
+        severity_sample_count=4000,
+        use_raster_data=True,
         agbd_raster_path="../data/AGBD/Hubei_AGB_2022.tif",
         tcc_raster_path="../data/TCC/Hubei_TCC_2022.tif",
         lulc_base_raster_path="../data/LULC/Hubei_LULC_2022.tif",
         lulc_target_raster_path="../data/PLUS_predictions/BAUSimulation_1.tif",
         drivers_raster_path="../data/森林损失/Hubei_LossDriversAndYear_2001_2023.tif",
         reserve_raster_path="../data/自然保护区/Hubei_NatureReserve.tif",
-        env_raster_paths="../data/environmentFactors/地形/Hubei_Slope.tif\nMAP=../data/environmentFactors/温度降水/Hubei_MAP_2000_2022.tif\naccessibility=../data/欧氏距离/Hubei_Dist_RoadNet.tif",
-        forest_lulc_codes="1,2,3,4,5",
-        urban_lulc_codes="8,9",
+        env_raster_paths=(
+            "slope=../data/environmentFactors/地形/Hubei_Slope.tif\n"
+            "moisture=../data/environmentFactors/温度降水/Hubei_MAP_2000_2022.tif\n"
+            "accessibility=../data/欧氏距离/Hubei_Dist_RoadNet.tif\n"
+            "DEM=../data/environmentFactors/地形/Hubei_DEM.tif\n"
+            "TPI=../data/environmentFactors/地形/Hubei_TPI_100m.tif\n"
+            "MAT=../data/environmentFactors/温度降水/Hubei_MAT_2000_2022.tif\n"
+            "AET=../data/environmentFactors/温度降水/Hubei_Annual_AET_2000_2022.tif\n"
+            "Nightlight=../data/environmentFactors/社会经济/Hubei_Nightlight_2022.tif\n"
+            "PopDensity=../data/environmentFactors/社会经济/Hubei_Pop_Density_2020.tif\n"
+            "NPP=../data/Hubei_NPP_Mean_2000_2022.tif"
+        ),
+        forest_lulc_codes="4,5,6",
+        urban_lulc_codes="13",
         logging_driver_value=4,
         reserve_value=1,
         write_raster_outputs=True,
@@ -130,6 +160,21 @@ class ScenarioConfig:
         self.ml_sample_count = int(ml_sample_count)
         self.ml_n_estimators = int(ml_n_estimators)
         self.ml_max_depth = int(ml_max_depth)
+        self.use_history_training = bool(use_history_training)
+        if history_agbd_paths is None:
+            history_agbd_paths = build_default_year_paths("AGBD", "Hubei_AGB")
+        if history_tcc_paths is None:
+            history_tcc_paths = build_default_year_paths("TCC", "Hubei_TCC")
+        if history_lulc_paths is None:
+            history_lulc_paths = build_default_year_paths("LULC", "Hubei_LULC")
+        self.history_agbd_paths = str(history_agbd_paths)
+        self.history_tcc_paths = str(history_tcc_paths)
+        self.history_lulc_paths = str(history_lulc_paths)
+        self.use_driver_sample_weight = bool(use_driver_sample_weight)
+        self.logging_probability_band = int(logging_probability_band)
+        self.urban_probability_band = int(urban_probability_band)
+        self.driver_probability_scale = float(driver_probability_scale)
+        self.severity_sample_count = int(severity_sample_count)
         self.use_raster_data = bool(use_raster_data)
         self.agbd_raster_path = str(agbd_raster_path)
         self.tcc_raster_path = str(tcc_raster_path)
@@ -182,6 +227,15 @@ class ScenarioConfig:
             "ml_sample_count": self.ml_sample_count,
             "ml_n_estimators": self.ml_n_estimators,
             "ml_max_depth": self.ml_max_depth,
+            "use_history_training": self.use_history_training,
+            "history_agbd_paths": self.history_agbd_paths,
+            "history_tcc_paths": self.history_tcc_paths,
+            "history_lulc_paths": self.history_lulc_paths,
+            "use_driver_sample_weight": self.use_driver_sample_weight,
+            "logging_probability_band": self.logging_probability_band,
+            "urban_probability_band": self.urban_probability_band,
+            "driver_probability_scale": self.driver_probability_scale,
+            "severity_sample_count": self.severity_sample_count,
             "use_raster_data": self.use_raster_data,
             "agbd_raster_path": self.agbd_raster_path,
             "tcc_raster_path": self.tcc_raster_path,

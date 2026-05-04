@@ -48,6 +48,7 @@ class FullWorkflowTest(unittest.TestCase):
             ml_max_depth=6,
             severity_method=severity_method,
             base_seed=42,
+            use_raster_data=False,
         )
 
     def run_complete_flow(self, severity_method):
@@ -98,13 +99,14 @@ class FullWorkflowTest(unittest.TestCase):
             logging_patch_min_size=20,
             logging_patch_max_size=20,
             logging_library_patch_count=5,
+            use_raster_data=False,
         )
 
         with self.assertRaisesRegex(ValueError, "采伐事件生成失败"):
             ScenarioEngine().generate_all_events(config)
 
     def test_zero_reserve_ratio_has_no_reserved_cells(self):
-        config = ScenarioConfig(grid_rows=8, grid_cols=8, reserve_ratio=0.0)
+        config = ScenarioConfig(grid_rows=8, grid_cols=8, reserve_ratio=0.0, use_raster_data=False)
 
         reserve_mask = ScenarioEngine()._build_reserve_mask(config)
 
@@ -203,6 +205,7 @@ class FullWorkflowTest(unittest.TestCase):
             logging_patch_max_size=8,
             logging_library_patch_count=20,
             use_raster_data=True,
+            use_history_training=False,
             agbd_raster_path=str(agbd_path),
             tcc_raster_path=str(tcc_path),
             lulc_base_raster_path=str(lulc_base_path),
@@ -230,6 +233,86 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertTrue(Path(bundle.output_files["mean_AGBD_tif"]).exists())
         self.assertTrue(report.output_files)
 
+    def test_history_training_uses_driver_sample_weight(self):
+        output_dir = self.get_test_output_dir() / "history_case"
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        rows = 14
+        cols = 14
+        agbd_2020 = np.full((rows, cols), 90.0, dtype=np.float32)
+        agbd_2022 = np.full((rows, cols), 96.0, dtype=np.float32)
+        agbd_2022[3:6, 3:6] = 50.0
+        agbd_2022[8:11, 8:11] = 42.0
+
+        tcc_2020 = np.full((rows, cols), 0.65, dtype=np.float32)
+        tcc_2022 = np.full((rows, cols), 0.70, dtype=np.float32)
+        tcc_2022[3:6, 3:6] = 0.20
+        tcc_2022[8:11, 8:11] = 0.12
+
+        lulc_2020 = np.full((rows, cols), 1, dtype=np.uint8)
+        lulc_2022 = np.full((rows, cols), 1, dtype=np.uint8)
+        lulc_2022[3:6, 3:6] = 8
+
+        drivers = np.zeros((3, rows, cols), dtype=np.uint8)
+        drivers[0, 8:11, 8:11] = 4
+        drivers[1, 8:11, 8:11] = 220
+        drivers[2, 3:6, 3:6] = 200
+
+        agbd_2020_path = output_dir / "agbd_2020.tif"
+        agbd_2022_path = output_dir / "agbd_2022.tif"
+        tcc_2020_path = output_dir / "tcc_2020.tif"
+        tcc_2022_path = output_dir / "tcc_2022.tif"
+        lulc_2020_path = output_dir / "lulc_2020.tif"
+        lulc_2022_path = output_dir / "lulc_2022.tif"
+        drivers_path = output_dir / "drivers_multiband.tif"
+
+        self.write_test_raster(agbd_2020_path, agbd_2020, "float32", -9999.0)
+        self.write_test_raster(agbd_2022_path, agbd_2022, "float32", -9999.0)
+        self.write_test_raster(tcc_2020_path, tcc_2020, "float32", -9999.0)
+        self.write_test_raster(tcc_2022_path, tcc_2022, "float32", -9999.0)
+        self.write_test_raster(lulc_2020_path, lulc_2020, "uint8", 255)
+        self.write_test_raster(lulc_2022_path, lulc_2022, "uint8", 255)
+        self.write_multiband_test_raster(drivers_path, drivers, "uint8", 255)
+
+        config = ScenarioConfig(
+            scenario_name="history_training",
+            base_year=2022,
+            target_year=2025,
+            mc_n_simulations=1,
+            ml_sample_count=80,
+            ml_n_estimators=10,
+            ml_max_depth=4,
+            logging_patch_min_size=1,
+            logging_patch_max_size=5,
+            logging_library_patch_count=10,
+            use_raster_data=True,
+            use_history_training=True,
+            use_driver_sample_weight=True,
+            agbd_raster_path=str(agbd_2022_path),
+            tcc_raster_path=str(tcc_2022_path),
+            lulc_base_raster_path=str(lulc_2022_path),
+            lulc_target_raster_path=str(lulc_2022_path),
+            drivers_raster_path=str(drivers_path),
+            reserve_raster_path="",
+            env_raster_paths="",
+            history_agbd_paths=f"2020={agbd_2020_path}\n2022={agbd_2022_path}",
+            history_tcc_paths=f"2020={tcc_2020_path}\n2022={tcc_2022_path}",
+            history_lulc_paths=f"2020={lulc_2020_path}\n2022={lulc_2022_path}",
+            forest_lulc_codes="1",
+            urban_lulc_codes="8",
+            logging_driver_value=4,
+            output_dir=str(output_dir),
+        )
+
+        events = ScenarioEngine().generate_all_events(config)
+        events = SeverityEngine().assign_all(events, config)
+        bundle = MonteCarloEngine().run(events, config)
+
+        self.assertFalse(bundle.training_sample_df.empty)
+        self.assertIn("sample_weight", bundle.training_sample_df.columns)
+        self.assertGreater(float(bundle.training_sample_df["sample_weight"].max()), 0.5)
+        self.assertGreater(bundle.summary["mean_agbd_per_ha"], 0)
+
     def test_raster_shape_mismatch_is_rejected_before_simulation(self):
         output_dir = self.get_test_output_dir() / "raster_mismatch"
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -246,6 +329,7 @@ class FullWorkflowTest(unittest.TestCase):
 
         config = ScenarioConfig(
             use_raster_data=True,
+            use_history_training=False,
             agbd_raster_path=str(agbd_path),
             tcc_raster_path=str(tcc_path),
             lulc_base_raster_path=str(lulc_base_path),
@@ -269,6 +353,7 @@ class FullWorkflowTest(unittest.TestCase):
 
         config = ScenarioConfig(
             use_raster_data=True,
+            use_history_training=False,
             agbd_raster_path=str(agbd_path),
             tcc_raster_path=str(tcc_path),
             env_raster_paths="",
@@ -290,6 +375,20 @@ class FullWorkflowTest(unittest.TestCase):
         }
         with rasterio.open(path, "w", **profile) as dst:
             dst.write(data, 1)
+
+    def write_multiband_test_raster(self, path, data, dtype, nodata):
+        profile = {
+            "driver": "GTiff",
+            "height": data.shape[1],
+            "width": data.shape[2],
+            "count": data.shape[0],
+            "dtype": dtype,
+            "crs": None,
+            "transform": from_origin(0, 20, 1, 1),
+            "nodata": nodata,
+        }
+        with rasterio.open(path, "w", **profile) as dst:
+            dst.write(data)
 
 
 if __name__ == "__main__":

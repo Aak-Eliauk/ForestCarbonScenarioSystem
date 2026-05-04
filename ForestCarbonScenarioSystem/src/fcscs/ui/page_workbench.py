@@ -32,7 +32,7 @@ RUN_STAGE_KEY = "workbench_run_stage"
 RUN_MESSAGE_KEY = "workbench_run_message"
 RUN_LOG_KEY = "workbench_run_log"
 RUN_LOG_PATH_KEY = "workbench_run_log_path"
-RUN_STAGES = ["等待开始", "检查输入", "准备快速测试", "生成事件", "计算强度", "模型预测", "汇总结果", "完成"]
+RUN_STAGES = ["等待开始", "检查输入", "准备快速测试", "生成事件", "经验强度采样", "训练模型", "蒙特卡洛模拟", "汇总结果", "完成"]
 WIZARD_STEPS = [
     ("data", "数据准备"),
     ("scenario", "情景方案"),
@@ -175,7 +175,7 @@ def _render_data_step(current):
         terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
         climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
         human_path = _get_env_path_by_role(current.env_raster_paths, "human")
-        env_extra_text = _get_extra_env_text(current.env_raster_paths)
+        extra_env_items = _get_extra_env_items(current.env_raster_paths)
 
         e1, e2, e3 = st.columns(3)
         with e1:
@@ -189,13 +189,25 @@ def _render_data_step(current):
             st.caption("输入道路距离、居民点距离、城镇距离、可达性、人口密度等栅格。")
 
         with st.expander("其他环境因子"):
-            env_extra_text = st.text_area(
-                "其他环境因子路径",
-                value=env_extra_text,
-                height=80,
-                key="wizard_env_extra_text",
-                placeholder="soil=I:/data/soil.tif\naspect=I:/data/aspect.tif",
+            extra_env_items = _render_extra_env_factor_form(extra_env_items, project_rasters)
+
+        with st.expander("历史训练数据"):
+            use_history_training = st.checkbox(
+                "启用历史数据训练模型",
+                value=current.use_history_training,
+                key="wizard_use_history_training",
             )
+            st.caption("用于训练模型的历史数据。每类至少填写两个相同年份，系统会按相邻年份构造训练样本。")
+            h1, h2, h3 = st.columns(3)
+            with h1:
+                st.markdown("**历史 AGBD**")
+                history_agbd_paths = _render_year_raster_form("AGBD", current.history_agbd_paths, project_rasters, "wizard_hist_agbd")
+            with h2:
+                st.markdown("**历史 TCC**")
+                history_tcc_paths = _render_year_raster_form("TCC", current.history_tcc_paths, project_rasters, "wizard_hist_tcc")
+            with h3:
+                st.markdown("**历史 LULC**")
+                history_lulc_paths = _render_year_raster_form("LULC", current.history_lulc_paths, project_rasters, "wizard_hist_lulc")
 
         _render_required_path_status(
             [
@@ -226,7 +238,11 @@ def _render_data_step(current):
         terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
         climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
         human_path = _get_env_path_by_role(current.env_raster_paths, "human")
-        env_extra_text = _get_extra_env_text(current.env_raster_paths)
+        extra_env_items = _get_extra_env_items(current.env_raster_paths)
+        use_history_training = current.use_history_training
+        history_agbd_paths = current.history_agbd_paths
+        history_tcc_paths = current.history_tcc_paths
+        history_lulc_paths = current.history_lulc_paths
         forest_lulc_codes = current.forest_lulc_codes
         urban_lulc_codes = current.urban_lulc_codes
         logging_driver_value = current.logging_driver_value
@@ -246,7 +262,7 @@ def _render_data_step(current):
             st.rerun()
     with c_save:
         if st.button("保存数据并继续", type="primary", use_container_width=True, key="wizard_save_data"):
-            env_raster_paths = _build_env_raster_text(terrain_path, climate_path, human_path, env_extra_text)
+            env_raster_paths = _build_env_raster_text(terrain_path, climate_path, human_path, extra_env_items)
             missing = []
             if use_raster_data:
                 missing = _find_required_missing(
@@ -268,6 +284,10 @@ def _render_data_step(current):
             new_config.drivers_raster_path = drivers_raster_path
             new_config.reserve_raster_path = reserve_raster_path
             new_config.env_raster_paths = env_raster_paths
+            new_config.use_history_training = bool(use_history_training)
+            new_config.history_agbd_paths = history_agbd_paths
+            new_config.history_tcc_paths = history_tcc_paths
+            new_config.history_lulc_paths = history_lulc_paths
             new_config.forest_lulc_codes = forest_lulc_codes
             new_config.urban_lulc_codes = urban_lulc_codes
             new_config.logging_driver_value = int(logging_driver_value)
@@ -324,6 +344,11 @@ def _render_scenario_step(current):
     agbd_to_agc_factor = current.agbd_to_agc_factor
     severity_method = current.severity_method
     base_seed = current.base_seed
+    use_driver_sample_weight = current.use_driver_sample_weight
+    logging_probability_band = current.logging_probability_band
+    urban_probability_band = current.urban_probability_band
+    driver_probability_scale = current.driver_probability_scale
+    severity_sample_count = current.severity_sample_count
     logging_cap = current.logging_severity_cap_quantile
     if logging_cap is None:
         logging_cap = 1.0
@@ -355,6 +380,22 @@ def _render_scenario_step(current):
             base_seed = st.number_input("随机种子", value=current.base_seed, step=1, key="wizard_seed")
         with b5:
             pixel_area_ha = st.number_input("像元面积 ha", min_value=0.0001, max_value=100.0, value=float(current.pixel_area_ha), step=0.10, format="%.4f", key="wizard_pixel_area")
+
+        c_weight, c_log_band, c_urban_band, c_scale = st.columns(4)
+        with c_weight:
+            use_driver_sample_weight = st.checkbox("使用 Drivers 概率作为训练权重", value=current.use_driver_sample_weight, key="wizard_driver_weight")
+        with c_log_band:
+            logging_probability_band = st.number_input("采伐概率波段", min_value=1, max_value=20, value=current.logging_probability_band, step=1, key="wizard_log_prob_band")
+        with c_urban_band:
+            urban_probability_band = st.number_input("城镇概率波段", min_value=1, max_value=20, value=current.urban_probability_band, step=1, key="wizard_urban_prob_band")
+        with c_scale:
+            driver_probability_scale = st.number_input("概率缩放值", min_value=1.0, max_value=10000.0, value=float(current.driver_probability_scale), step=10.0, key="wizard_driver_scale")
+
+        c_sev, c_note = st.columns([1, 2])
+        with c_sev:
+            severity_sample_count = st.number_input("经验强度样本数", min_value=100, max_value=200000, value=current.severity_sample_count, step=100, key="wizard_sev_sample_count")
+        with c_note:
+            st.caption("启用历史训练后，系统会从历史 TCC 变化中抽取扰动强度经验分布；未提供历史数据时自动使用简化随机分布。")
 
     c_back, c_save = st.columns([1, 2])
     with c_back:
@@ -392,6 +433,11 @@ def _render_scenario_step(current):
             new_config.pixel_area_ha = float(pixel_area_ha)
             new_config.severity_method = severity_method
             new_config.base_seed = int(base_seed)
+            new_config.use_driver_sample_weight = bool(use_driver_sample_weight)
+            new_config.logging_probability_band = int(logging_probability_band)
+            new_config.urban_probability_band = int(urban_probability_band)
+            new_config.driver_probability_scale = float(driver_probability_scale)
+            new_config.severity_sample_count = int(severity_sample_count)
 
             _save_and_clear(new_config)
             _go_to_step(2)
@@ -678,7 +724,7 @@ def _render_required_path_status(items):
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
 
-def _raster_path_input(label, current_value, project_rasters, key):
+def _raster_path_input(label, current_value, project_rasters, key, compact=False):
     text_key = key + "_path_text"
     select_key = key + "_project_select"
     default_option = "手动输入或浏览文件"
@@ -693,16 +739,24 @@ def _raster_path_input(label, current_value, project_rasters, key):
     if selected != default_option:
         st.session_state[text_key] = selected
 
-    c1, c2 = st.columns([4, 1])
-    with c2:
-        st.write("")
+    if compact:
         if st.button("浏览...", key=key + "_browse"):
             picked_path = _open_windows_file_dialog(label)
             if picked_path:
                 st.session_state[text_key] = picked_path
                 _rerun_page()
-    with c1:
         st.text_input(label + " 路径", key=text_key)
+    else:
+        c1, c2 = st.columns([4, 1])
+        with c2:
+            st.write("")
+            if st.button("浏览...", key=key + "_browse"):
+                picked_path = _open_windows_file_dialog(label)
+                if picked_path:
+                    st.session_state[text_key] = picked_path
+                    _rerun_page()
+        with c1:
+            st.text_input(label + " 路径", key=text_key)
 
     return str(st.session_state.get(text_key, "")).strip()
 
@@ -823,8 +877,8 @@ def _get_env_path_by_role(env_text, role):
     return ""
 
 
-def _get_extra_env_text(env_text):
-    lines = []
+def _get_extra_env_items(env_text):
+    items = []
     env_items = parse_env_raster_paths(env_text)
     fixed_paths = {
         _get_env_path_by_role(env_text, "terrain"),
@@ -840,11 +894,100 @@ def _get_extra_env_text(env_text):
             continue
         if clean_path in fixed_paths:
             continue
-        lines.append(clean_name + "=" + clean_path)
+        items.append({"name": clean_name, "path": clean_path})
+    return items
+
+
+def _render_extra_env_factor_form(items, project_rasters):
+    count_key = "wizard_extra_env_count"
+    if count_key not in st.session_state:
+        st.session_state[count_key] = max(3, len(items) + 1)
+    if st.button("增加一个环境因子", key="wizard_extra_env_add"):
+        st.session_state[count_key] = int(st.session_state[count_key]) + 1
+        st.rerun()
+
+    row_count = max(int(st.session_state[count_key]), len(items) + 1)
+    rows = _prepare_fixed_rows(items, row_count, {"name": "", "path": ""})
+    result = []
+    for index in range(len(rows)):
+        row = rows[index]
+        c_name, c_path = st.columns([1, 3])
+        with c_name:
+            name_value = st.text_input(
+                "因子名称",
+                value=row.get("name", ""),
+                key=f"wizard_extra_env_name_{index}",
+                placeholder="如 soil、nightlight",
+            )
+        with c_path:
+            path_value = _raster_path_input(
+                "因子栅格",
+                row.get("path", ""),
+                project_rasters,
+                f"wizard_extra_env_path_{index}",
+                compact=True,
+            )
+        if str(name_value).strip() and str(path_value).strip():
+            result.append({"name": str(name_value).strip(), "path": str(path_value).strip()})
+    return result
+
+
+def _prepare_fixed_rows(items, count, empty_row):
+    rows = []
+    for item in items:
+        rows.append(dict(item))
+    while len(rows) < count:
+        rows.append(dict(empty_row))
+    return rows[:count]
+
+
+def _render_year_raster_form(label, text_value, project_rasters, key_prefix):
+    items = _parse_year_path_items(text_value)
+    rows = _prepare_fixed_rows(items, 6, {"year": "", "path": ""})
+    result = []
+    for index in range(len(rows)):
+        row = rows[index]
+        c_year, c_path = st.columns([1, 3])
+        with c_year:
+            year_value = st.text_input(
+                "年份",
+                value=str(row.get("year", "")),
+                key=f"{key_prefix}_year_{index}",
+                placeholder="2020",
+            )
+        with c_path:
+            path_value = _raster_path_input(
+                label + " 栅格",
+                row.get("path", ""),
+                project_rasters,
+                f"{key_prefix}_path_{index}",
+                compact=True,
+            )
+        if str(year_value).strip() and str(path_value).strip():
+            result.append({"year": str(year_value).strip(), "path": str(path_value).strip()})
+    return _build_year_path_text(result)
+
+
+def _parse_year_path_items(text_value):
+    items = []
+    env_items = parse_env_raster_paths(text_value)
+    for year_text, path_text in env_items:
+        items.append({"year": str(year_text).strip(), "path": str(path_text).strip()})
+    return items
+
+
+def _build_year_path_text(items):
+    lines = []
+    for item in items:
+        year_text = str(item.get("year", "")).strip()
+        path_text = str(item.get("path", "")).strip()
+        if not year_text or not path_text:
+            continue
+        lines.append(year_text + "=" + path_text)
     return "\n".join(lines)
 
 
-def _build_env_raster_text(terrain_path, climate_path, human_path, extra_text):
+def _build_env_raster_text(terrain_path, climate_path, human_path, extra_items):
     lines = []
 
     terrain_path = str(terrain_path).strip()
@@ -858,12 +1001,11 @@ def _build_env_raster_text(terrain_path, climate_path, human_path, extra_text):
     if human_path:
         lines.append("accessibility=" + human_path)
 
-    extra_items = parse_env_raster_paths(extra_text)
     existing_names = {"slope", "moisture", "accessibility"}
     existing_paths = {terrain_path, climate_path, human_path}
-    for name, path_text in extra_items:
-        clean_name = str(name).strip()
-        clean_path = str(path_text).strip()
+    for item in extra_items:
+        clean_name = str(item.get("name", "")).strip()
+        clean_path = str(item.get("path", "")).strip()
         if not clean_name or not clean_path:
             continue
         if clean_name.lower() in existing_names:
@@ -925,6 +1067,10 @@ def _copy_data_settings(source, target):
     target.drivers_raster_path = source.drivers_raster_path
     target.reserve_raster_path = source.reserve_raster_path
     target.env_raster_paths = source.env_raster_paths
+    target.use_history_training = source.use_history_training
+    target.history_agbd_paths = source.history_agbd_paths
+    target.history_tcc_paths = source.history_tcc_paths
+    target.history_lulc_paths = source.history_lulc_paths
     target.forest_lulc_codes = source.forest_lulc_codes
     target.urban_lulc_codes = source.urban_lulc_codes
     target.logging_driver_value = source.logging_driver_value
@@ -963,7 +1109,10 @@ def _clear_data_widget_state():
         if key.startswith("wizard_") and (
             key.endswith("_path_text")
             or key.endswith("_project_select")
-            or key in {"wizard_data_mode", "wizard_output_dir_path_text", "wizard_env_extra_text"}
+            or key.startswith("wizard_extra_env_")
+            or key == "wizard_extra_env_count"
+            or key.startswith("wizard_hist_")
+            or key in {"wizard_data_mode", "wizard_output_dir_path_text", "wizard_use_history_training"}
         ):
             del st.session_state[key]
 

@@ -7,8 +7,10 @@ from fcscs.domain.models import EventTable
 from fcscs.engines.raster_tools import (
     parse_code_list,
     parse_env_raster_paths,
+    parse_year_raster_paths,
     path_exists,
     read_raster,
+    read_raster_band,
     rasterio_is_available,
     validate_raster_alignment,
 )
@@ -898,20 +900,150 @@ class SeverityEngine:
             return EventTable(event_table.event_type, records)
 
         if "Severity" not in records.columns:
-            records["Severity"] = self._build_default_severity(records, event_table.event_type, config)
+            records["Severity"] = self._build_severity(records, event_table.event_type, config)
 
         records["Severity"] = records["Severity"].astype(float).clip(0.0, 1.0)
         if "Severity_Class" not in records.columns:
             records["Severity_Class"] = records["Severity"].apply(self._classify)
         return EventTable(event_table.event_type, records)
 
-    def _build_default_severity(self, records, event_type, config):
-        seed_offset = {
+    def _build_severity(self, records, event_type, config):
+        if getattr(config, "use_history_training", False) and getattr(config, "use_raster_data", False):
+            values = self._sample_empirical_severity(records, event_type, config)
+            if values is not None:
+                return values
+        return self._build_default_severity(records, event_type, config)
+
+    def _sample_empirical_severity(self, records, event_type, config):
+        distribution = self._build_empirical_distribution(event_type, config)
+        if distribution is None or len(distribution) == 0:
+            return None
+
+        rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type))
+        picked = rng.choice(distribution, size=len(records), replace=True)
+        if event_type in {"urban_conv", "urban_conversion"}:
+            picked = np.maximum(picked, 0.62)
+        if event_type == "urban_edge":
+            picked = picked * (1.0 - float(config.urban_severity_reduction))
+        if event_type == "logging":
+            picked = picked * (1.0 - float(config.logging_severity_reduction))
+        return np.clip(picked, 0.0, 0.95)
+
+    def _build_empirical_distribution(self, event_type, config):
+        tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
+        lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
+        years = sorted(tcc_paths.keys())
+        if len(years) < 2:
+            return None
+
+        rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type) + 90)
+        forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
+        samples = []
+        max_samples = max(200, int(getattr(config, "severity_sample_count", 4000)))
+
+        drivers_class = None
+        if event_type == "logging" and path_exists(getattr(config, "drivers_raster_path", "")):
+            try:
+                drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
+            except Exception:
+                drivers_class = None
+
+        for index in range(len(years) - 1):
+            start_year = years[index]
+            end_year = years[index + 1]
+            if not path_exists(tcc_paths[start_year]) or not path_exists(tcc_paths[end_year]):
+                continue
+            tcc_start, _ = read_raster(tcc_paths[start_year], make_float=True)
+            tcc_end, _ = read_raster(tcc_paths[end_year], make_float=True)
+            tcc_start = self._normalize_tcc(tcc_start)
+            tcc_end = self._normalize_tcc(tcc_end)
+            mask = np.isfinite(tcc_start) & np.isfinite(tcc_end)
+
+            if event_type == "logging":
+                if drivers_class is None or drivers_class.shape != tcc_start.shape:
+                    continue
+                mask = mask & (drivers_class == int(config.logging_driver_value))
+            else:
+                if start_year not in lulc_paths or end_year not in lulc_paths:
+                    continue
+                if not path_exists(lulc_paths[start_year]) or not path_exists(lulc_paths[end_year]):
+                    continue
+                lulc_start, _ = read_raster(lulc_paths[start_year])
+                lulc_end, _ = read_raster(lulc_paths[end_year])
+                if lulc_start.shape != tcc_start.shape or lulc_end.shape != tcc_start.shape:
+                    continue
+                conv_mask = np.isin(lulc_start, forest_codes) & np.isin(lulc_end, urban_codes)
+                if event_type in {"urban_conv", "urban_conversion"}:
+                    mask = mask & conv_mask
+                else:
+                    edge_mask = self._build_edge_mask(conv_mask, np.isin(lulc_end, forest_codes))
+                    mask = mask & edge_mask
+
+            row_ids, col_ids = np.where(mask)
+            if len(row_ids) == 0:
+                continue
+            keep_count = min(len(row_ids), max_samples - len(samples))
+            if keep_count <= 0:
+                break
+            picked = rng.choice(len(row_ids), size=keep_count, replace=False)
+            for picked_index in picked:
+                row = int(row_ids[picked_index])
+                col = int(col_ids[picked_index])
+                severity = self._calculate_severity_value(tcc_start[row, col], tcc_end[row, col])
+                samples.append(severity)
+            if len(samples) >= max_samples:
+                break
+
+        if not samples:
+            return None
+        return np.array(samples, dtype=np.float32)
+
+    def _normalize_tcc(self, surface):
+        result = surface.astype(np.float32).copy()
+        max_value = np.nanmax(result)
+        if max_value > 1.5:
+            result = result / 100.0
+        return np.clip(result, 0.0, 1.0)
+
+    def _calculate_severity_value(self, before, after):
+        before = float(before)
+        after = float(after)
+        if before <= 0.05:
+            return 0.0
+        return float(np.clip((before - after) / before, 0.0, 0.95))
+
+    def _build_edge_mask(self, conv_mask, forest_mask):
+        rows, cols = conv_mask.shape
+        result = np.zeros(conv_mask.shape, dtype=bool)
+        conv_rows, conv_cols = np.where(conv_mask)
+        for index in range(len(conv_rows)):
+            row = int(conv_rows[index])
+            col = int(conv_cols[index])
+            for row_delta in [-1, 0, 1]:
+                for col_delta in [-1, 0, 1]:
+                    if row_delta == 0 and col_delta == 0:
+                        continue
+                    next_row = row + row_delta
+                    next_col = col + col_delta
+                    if next_row < 0 or next_row >= rows:
+                        continue
+                    if next_col < 0 or next_col >= cols:
+                        continue
+                    if forest_mask[next_row, next_col]:
+                        result[next_row, next_col] = True
+        return result
+
+    def _severity_seed_offset(self, event_type):
+        return {
             "logging": 301,
             "urban_conv": 401,
             "urban_conversion": 401,
             "urban_edge": 501,
         }.get(event_type, 601)
+
+    def _build_default_severity(self, records, event_type, config):
+        seed_offset = self._severity_seed_offset(event_type)
         rng = np.random.default_rng(int(config.base_seed) + seed_offset)
         base = rng.beta(2.0, 3.0, size=len(records))
         if event_type in {"urban_conv", "urban_conversion"}:

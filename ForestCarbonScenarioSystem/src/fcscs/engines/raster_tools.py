@@ -74,6 +74,23 @@ def read_raster(path_text, make_float=False):
     return data, profile
 
 
+def read_raster_band(path_text, band=1, make_float=False):
+    import rasterio
+
+    path = resolve_input_path(path_text)
+    with rasterio.open(path) as src:
+        data = src.read(int(band))
+        profile = src.profile.copy()
+        nodata = src.nodata
+
+    if make_float:
+        data = data.astype(np.float32)
+        if nodata is not None:
+            data[data == np.float32(nodata)] = np.nan
+
+    return data, profile
+
+
 def read_raster_metadata(path_text):
     import rasterio
 
@@ -192,5 +209,38 @@ def parse_env_raster_paths(text):
         if name and path:
             result.append((name, path))
             index = index + 1
+
+    return result
+
+
+def parse_year_raster_paths(text):
+    result = {}
+    if text is None:
+        return result
+
+    raw_text = str(text).strip()
+    if raw_text == "":
+        return result
+
+    pieces = raw_text.replace("\r", "\n").replace(";", "\n").split("\n")
+    for piece in pieces:
+        clean_piece = piece.strip()
+        if clean_piece == "":
+            continue
+        if "=" not in clean_piece:
+            continue
+
+        year_text, path_text = clean_piece.split("=", 1)
+        year_text = year_text.strip()
+        path_text = path_text.strip()
+        if year_text == "" or path_text == "":
+            continue
+
+        try:
+            year = int(float(year_text))
+        except Exception:
+            continue
+
+        result[year] = path_text
 
     return result

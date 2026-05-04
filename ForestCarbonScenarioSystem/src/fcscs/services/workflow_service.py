@@ -22,10 +22,11 @@ def run_simulation_workflow(config, progress_callback=None):
     raw_events = scenario_engine.generate_all_events(config)
     patch_library = scenario_engine.last_patch_library
 
-    _notify(progress_callback, 36, "计算强度", "正在为扰动事件计算强度。")
+    _notify(progress_callback, 36, "经验强度采样", "正在根据历史经验分布或默认分布为扰动事件抽取强度。")
     severity_events = severity_engine.assign_all(raw_events, config)
 
-    _notify(progress_callback, 58, "模型预测", "正在训练模型并执行蒙特卡洛模拟。")
+    _notify(progress_callback, 52, "训练模型", "正在构造训练样本并训练 AGBD 响应模型。")
+    _notify(progress_callback, 66, "蒙特卡洛模拟", "正在执行多次未来情景模拟并预测 AGBD/AGC。")
     bundle = monte_carlo_engine.run(severity_events, config)
 
     _notify(progress_callback, 86, "汇总结果", "正在汇总 AGBD、AGC 和不确定性结果。")

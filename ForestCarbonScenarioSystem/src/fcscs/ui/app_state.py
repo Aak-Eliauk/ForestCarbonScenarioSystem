@@ -20,7 +20,11 @@ def init_state():
 
 def get_config():
     init_state()
-    return st.session_state[STATE_KEY]["config"]
+    config = st.session_state[STATE_KEY]["config"]
+    if not hasattr(config, "use_history_training"):
+        config = ScenarioConfig(**config.to_dict())
+        st.session_state[STATE_KEY]["config"] = config
+    return config
 
 
 def set_config(config):
