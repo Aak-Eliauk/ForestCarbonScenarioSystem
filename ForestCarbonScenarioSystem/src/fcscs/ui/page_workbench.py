@@ -7,7 +7,7 @@ import pandas as pd
 import streamlit as st
 
 from fcscs.config.defaults import ScenarioConfig, build_preset_config, list_preset_names, sanitize_scenario_name
-from fcscs.engines.raster_tools import parse_env_raster_paths, path_exists
+from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists
 from fcscs.services.quick_run_service import build_quick_config
 from fcscs.services.workflow_service import run_simulation_workflow
 from fcscs.ui.app_state import (
@@ -135,125 +135,71 @@ def _build_step_labels(config):
 def _render_data_step(current):
     st.subheader("1 数据准备")
 
-    mode_index = 1 if current.use_raster_data else 0
-    data_mode = st.radio(
-        "数据来源",
-        ["演示网格", "真实栅格"],
-        index=mode_index,
-        horizontal=True,
-        key="wizard_data_mode",
-    )
-    use_raster_data = data_mode == "真实栅格"
+    use_raster_data = True
     output_dir = _folder_path_input("输出文件夹", current.output_dir, "wizard_output_dir")
-
     project_rasters = _find_project_rasters()
 
-    if use_raster_data:
-        st.markdown("**必填栅格**")
-        c1, c2 = st.columns(2)
-        with c1:
-            agbd_raster_path = _raster_path_input("AGBD 基准栅格", current.agbd_raster_path, project_rasters, "wizard_agbd")
-            lulc_base_raster_path = _raster_path_input("基准年 LULC", current.lulc_base_raster_path, project_rasters, "wizard_lulc_base")
-        with c2:
-            tcc_raster_path = _raster_path_input("TCC 树冠覆盖", current.tcc_raster_path, project_rasters, "wizard_tcc")
-            lulc_target_raster_path = _raster_path_input("目标年 LULC", current.lulc_target_raster_path, project_rasters, "wizard_lulc_target")
+    _render_section_title("基础栅格数据", "用于确定基准年森林碳储量和目标年土地利用变化。")
+    agbd_raster_path = _raster_path_input("森林地上生物量密度（AGBD）基准栅格", current.agbd_raster_path, project_rasters, "wizard_agbd")
+    tcc_raster_path = _raster_path_input("树冠覆盖度基准栅格", current.tcc_raster_path, project_rasters, "wizard_tcc")
+    lulc_base_raster_path = _raster_path_input("基准年土地利用栅格", current.lulc_base_raster_path, project_rasters, "wizard_lulc_base")
+    lulc_target_raster_path = _raster_path_input("目标年预测土地利用栅格", current.lulc_target_raster_path, project_rasters, "wizard_lulc_target")
 
-        st.markdown("**扰动与约束栅格**")
-        c3, c4 = st.columns(2)
-        with c3:
-            drivers_raster_path = _raster_path_input("Drivers 扰动来源", current.drivers_raster_path, project_rasters, "wizard_drivers")
-        with c4:
-            reserve_raster_path = _raster_path_input("保护区", current.reserve_raster_path, project_rasters, "wizard_reserve")
+    _render_section_title("扰动与约束数据", "森林损失驱动因素用于识别采伐发生位置，自然保护区用于避让约束。")
+    drivers_raster_path = _raster_path_input("森林损失驱动因素栅格", current.drivers_raster_path, project_rasters, "wizard_drivers")
+    reserve_raster_path = _raster_path_input("自然保护区栅格", current.reserve_raster_path, project_rasters, "wizard_reserve")
 
-        c5, c6 = st.columns(2)
-        with c5:
-            logging_driver_value = st.number_input("采伐 Drivers 编码", value=current.logging_driver_value, step=1, key="wizard_logging_value")
-        with c6:
-            reserve_value = st.number_input("保护区编码", value=current.reserve_value, step=1, key="wizard_reserve_value")
+    _render_section_title("环境因子栅格", "用于机器学习训练和预测，可表达地形、气候水分与人为活动影响。")
+    terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
+    climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
+    human_path = _get_env_path_by_role(current.env_raster_paths, "human")
+    extra_env_items = _get_extra_env_items(current.env_raster_paths)
 
-        st.markdown("**环境因子栅格**")
-        terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
-        climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
-        human_path = _get_env_path_by_role(current.env_raster_paths, "human")
-        extra_env_items = _get_extra_env_items(current.env_raster_paths)
+    terrain_path = _raster_path_input("地形因子栅格", terrain_path, project_rasters, "wizard_env_terrain")
+    st.caption("地形因子可使用坡度、高程、地形起伏度等数据，默认推荐坡度。")
+    climate_path = _raster_path_input("气候水分因子栅格", climate_path, project_rasters, "wizard_env_climate")
+    st.caption("气候水分因子可使用年降水量、平均降水量、实际蒸散量、湿度等数据。")
+    human_path = _raster_path_input("人为活动因子栅格", human_path, project_rasters, "wizard_env_human")
+    st.caption("人为活动因子可使用道路距离、居民点距离、城镇距离、人口密度、夜光等数据。")
 
-        e1, e2, e3 = st.columns(3)
-        with e1:
-            terrain_path = _raster_path_input("地形因子", terrain_path, project_rasters, "wizard_env_terrain")
-            st.caption("输入坡度、高程、地形起伏度等栅格，推荐使用坡度。")
-        with e2:
-            climate_path = _raster_path_input("气候水分因子", climate_path, project_rasters, "wizard_env_climate")
-            st.caption("输入年降水量、平均降水量、实际蒸散量、湿度等栅格。")
-        with e3:
-            human_path = _raster_path_input("人为活动因子", human_path, project_rasters, "wizard_env_human")
-            st.caption("输入道路距离、居民点距离、城镇距离、可达性、人口密度等栅格。")
+    with st.expander("其他环境因子"):
+        extra_env_items = _render_extra_env_factor_form(extra_env_items, project_rasters)
 
-        with st.expander("其他环境因子"):
-            extra_env_items = _render_extra_env_factor_form(extra_env_items, project_rasters)
+    _render_section_title("历史训练数据", "必填。连续年份树冠覆盖度用于量化森林损失强度，Drivers 用于定位采伐发生位置。")
+    with st.expander("历史训练数据输入", expanded=True):
+        use_history_training = True
+        st.caption("至少需要两组相同年份的历史森林地上生物量密度、树冠覆盖度和土地利用栅格，系统会按相邻年份构造训练样本。")
+        history_agbd_paths = _render_year_raster_form("历史森林地上生物量密度（AGBD）", current.history_agbd_paths, project_rasters, "wizard_hist_agbd")
+        history_tcc_paths = _render_year_raster_form("历史树冠覆盖度", current.history_tcc_paths, project_rasters, "wizard_hist_tcc")
+        history_lulc_paths = _render_year_raster_form("历史土地利用", current.history_lulc_paths, project_rasters, "wizard_hist_lulc")
 
-        with st.expander("历史训练数据"):
-            use_history_training = st.checkbox(
-                "启用历史数据训练模型",
-                value=current.use_history_training,
-                key="wizard_use_history_training",
-            )
-            st.caption("用于训练模型的历史数据。每类至少填写两个相同年份，系统会按相邻年份构造训练样本。")
-            h1, h2, h3 = st.columns(3)
-            with h1:
-                st.markdown("**历史 AGBD**")
-                history_agbd_paths = _render_year_raster_form("AGBD", current.history_agbd_paths, project_rasters, "wizard_hist_agbd")
-            with h2:
-                st.markdown("**历史 TCC**")
-                history_tcc_paths = _render_year_raster_form("TCC", current.history_tcc_paths, project_rasters, "wizard_hist_tcc")
-            with h3:
-                st.markdown("**历史 LULC**")
-                history_lulc_paths = _render_year_raster_form("LULC", current.history_lulc_paths, project_rasters, "wizard_hist_lulc")
+    data_missing = _find_data_missing(
+        agbd_raster_path,
+        tcc_raster_path,
+        lulc_base_raster_path,
+        lulc_target_raster_path,
+        drivers_raster_path,
+        reserve_raster_path,
+        history_agbd_paths,
+        history_tcc_paths,
+        history_lulc_paths,
+    )
+    _render_required_path_status(data_missing)
 
-        _render_required_path_status(
-            [
-                ("AGBD 基准栅格", agbd_raster_path),
-                ("TCC 树冠覆盖", tcc_raster_path),
-                ("基准年 LULC", lulc_base_raster_path),
-                ("目标年 LULC", lulc_target_raster_path),
-            ]
-        )
+    with st.expander("高级数据设置"):
+        c7, c8, c9, c10 = st.columns(4)
+        with c7:
+            forest_lulc_codes = st.text_input("森林类型编码", value=current.forest_lulc_codes, key="wizard_forest_codes")
+        with c8:
+            urban_lulc_codes = st.text_input("城镇类型编码", value=current.urban_lulc_codes, key="wizard_urban_codes")
+        with c9:
+            logging_driver_value = st.number_input("采伐扰动编码", value=current.logging_driver_value, step=1, key="wizard_logging_value")
+        with c10:
+            reserve_value = st.number_input("自然保护区编码", value=current.reserve_value, step=1, key="wizard_reserve_value")
+        write_raster_outputs = st.checkbox("输出 GeoTIFF 栅格结果", value=current.write_raster_outputs, key="wizard_write_tif")
 
-        with st.expander("高级数据设置"):
-            c7, c8 = st.columns(2)
-            with c7:
-                forest_lulc_codes = st.text_input("森林 LULC 编码", value=current.forest_lulc_codes, key="wizard_forest_codes")
-            with c8:
-                urban_lulc_codes = st.text_input("城镇 LULC 编码", value=current.urban_lulc_codes, key="wizard_urban_codes")
-            write_raster_outputs = st.checkbox("输出 GeoTIFF", value=current.write_raster_outputs, key="wizard_write_tif")
-
-        grid_rows = current.grid_rows
-        grid_cols = current.grid_cols
-    else:
-        agbd_raster_path = current.agbd_raster_path
-        tcc_raster_path = current.tcc_raster_path
-        lulc_base_raster_path = current.lulc_base_raster_path
-        lulc_target_raster_path = current.lulc_target_raster_path
-        drivers_raster_path = current.drivers_raster_path
-        reserve_raster_path = current.reserve_raster_path
-        terrain_path = _get_env_path_by_role(current.env_raster_paths, "terrain")
-        climate_path = _get_env_path_by_role(current.env_raster_paths, "climate")
-        human_path = _get_env_path_by_role(current.env_raster_paths, "human")
-        extra_env_items = _get_extra_env_items(current.env_raster_paths)
-        use_history_training = current.use_history_training
-        history_agbd_paths = current.history_agbd_paths
-        history_tcc_paths = current.history_tcc_paths
-        history_lulc_paths = current.history_lulc_paths
-        forest_lulc_codes = current.forest_lulc_codes
-        urban_lulc_codes = current.urban_lulc_codes
-        logging_driver_value = current.logging_driver_value
-        reserve_value = current.reserve_value
-        write_raster_outputs = current.write_raster_outputs
-
-        c1, c2 = st.columns(2)
-        with c1:
-            grid_rows = st.number_input("演示网格行数", min_value=16, max_value=512, value=current.grid_rows, step=16, key="wizard_rows")
-        with c2:
-            grid_cols = st.number_input("演示网格列数", min_value=16, max_value=512, value=current.grid_cols, step=16, key="wizard_cols")
+    grid_rows = current.grid_rows
+    grid_cols = current.grid_cols
 
     c_back, c_save = st.columns([1, 2])
     with c_back:
@@ -263,20 +209,23 @@ def _render_data_step(current):
     with c_save:
         if st.button("保存数据并继续", type="primary", use_container_width=True, key="wizard_save_data"):
             env_raster_paths = _build_env_raster_text(terrain_path, climate_path, human_path, extra_env_items)
-            missing = []
-            if use_raster_data:
-                missing = _find_required_missing(
-                    agbd_raster_path,
-                    tcc_raster_path,
-                    lulc_base_raster_path,
-                    lulc_target_raster_path,
-                )
+            missing = _find_data_missing(
+                agbd_raster_path,
+                tcc_raster_path,
+                lulc_base_raster_path,
+                lulc_target_raster_path,
+                drivers_raster_path,
+                reserve_raster_path,
+                history_agbd_paths,
+                history_tcc_paths,
+                history_lulc_paths,
+            )
             if missing:
-                st.error("必填栅格缺失：" + "、".join(missing))
+                st.error("必填数据还不完整：" + "、".join(missing))
                 return
 
             new_config = current.copy()
-            new_config.use_raster_data = bool(use_raster_data)
+            new_config.use_raster_data = True
             new_config.agbd_raster_path = agbd_raster_path
             new_config.tcc_raster_path = tcc_raster_path
             new_config.lulc_base_raster_path = lulc_base_raster_path
@@ -700,10 +649,7 @@ def _build_preflight_rows(config):
     rows.append(_check_row("数据配置", _data_ready(config), "必填数据已配置"))
     rows.append(_check_row("情景年份", _scenario_ready(config), f"{config.base_year} 到 {config.target_year}"))
     rows.append(_check_row("输出目录", _output_dir_ready(config), getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")))
-    if config.use_raster_data:
-        rows.append(_check_row("运行模式", True, "真实栅格建议先快速测试"))
-    else:
-        rows.append(_check_row("运行模式", True, f"演示网格 {config.grid_rows} x {config.grid_cols}"))
+    rows.append(_check_row("运行模式", True, "真实栅格数据"))
     return rows
 
 
@@ -711,54 +657,135 @@ def _check_row(item, passed, detail):
     return {"检查项": item, "状态": "通过" if passed else "未通过", "说明": detail}
 
 
-def _render_required_path_status(items):
-    rows = []
-    for name, path_text in items:
-        rows.append(
-            {
-                "数据项": name,
-                "状态": "已找到" if path_exists(path_text) else "缺失",
-                "路径": str(path_text),
-            }
+def _render_section_title(title, subtitle=""):
+    if subtitle:
+        html_text = f'<div class="data-section-title">{title}<span>{subtitle}</span></div>'
+    else:
+        html_text = f'<div class="data-section-title">{title}</div>'
+    st.markdown(html_text, unsafe_allow_html=True)
+
+
+def _render_required_path_status(missing_items):
+    if not missing_items:
+        st.markdown(
+            """
+            <div class="data-check-card ok">
+                <strong>数据检查通过</strong>
+                <p>基础栅格、扰动约束数据和历史训练数据均已填写并可读取。</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        return
+
+    missing_text = "、".join(missing_items)
+    st.markdown(
+        f"""
+        <div class="data-check-card warn">
+            <strong>还有 {len(missing_items)} 项需要补充</strong>
+            <p>{missing_text}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _raster_path_input(label, current_value, project_rasters, key, compact=False):
-    text_key = key + "_path_text"
-    select_key = key + "_project_select"
-    default_option = "手动输入或浏览文件"
+    select_key = key + "_path_combo"
+    pending_key = key + "_pending_path"
 
-    if text_key not in st.session_state:
-        st.session_state[text_key] = current_value
+    if pending_key in st.session_state:
+        st.session_state[select_key] = st.session_state[pending_key]
+        del st.session_state[pending_key]
 
-    options = [default_option]
-    options.extend(project_rasters)
+    session_value = st.session_state.get(select_key, "")
+    options = _build_path_options(current_value, project_rasters, session_value)
+    if select_key not in st.session_state:
+        st.session_state[select_key] = _initial_path_value(current_value, options)
 
-    selected = st.selectbox(label + " 项目内文件", options, index=0, key=select_key)
-    if selected != default_option:
-        st.session_state[text_key] = selected
-
+    selected_value = st.session_state.get(select_key, "")
     if compact:
+        selected_value = _render_path_combo(label, options, select_key)
         if st.button("浏览...", key=key + "_browse"):
             picked_path = _open_windows_file_dialog(label)
             if picked_path:
-                st.session_state[text_key] = picked_path
+                st.session_state[pending_key] = picked_path
                 _rerun_page()
-        st.text_input(label + " 路径", key=text_key)
     else:
-        c1, c2 = st.columns([4, 1])
-        with c2:
-            st.write("")
-            if st.button("浏览...", key=key + "_browse"):
+        label_col, path_col, button_col = st.columns([2.2, 6.3, 0.9])
+        with label_col:
+            st.markdown(f"**{label}**")
+        with path_col:
+            selected_value = _render_path_combo("路径", options, select_key)
+        with button_col:
+            if st.button("浏览", key=key + "_browse", use_container_width=True):
                 picked_path = _open_windows_file_dialog(label)
                 if picked_path:
-                    st.session_state[text_key] = picked_path
+                    st.session_state[pending_key] = picked_path
                     _rerun_page()
-        with c1:
-            st.text_input(label + " 路径", key=text_key)
 
-    return str(st.session_state.get(text_key, "")).strip()
+    return str(selected_value).strip()
+
+
+def _render_path_combo(label, options, select_key):
+    return st.selectbox(
+        label,
+        options,
+        index=_find_option_index(options, st.session_state.get(select_key, "")),
+        key=select_key,
+        label_visibility="collapsed",
+        accept_new_options=True,
+        format_func=_format_path_option,
+    )
+
+
+def _build_path_options(current_value, project_rasters, session_value=""):
+    options = []
+    current_text = str(current_value).strip()
+    if current_text:
+        options.append(current_text)
+
+    session_text = str(session_value).strip()
+    if session_text and session_text not in options:
+        options.append(session_text)
+
+    for path_text in project_rasters:
+        clean_path = str(path_text).strip()
+        if clean_path and clean_path not in options:
+            options.append(clean_path)
+
+    if not options:
+        options.append("")
+    return options
+
+
+def _initial_path_value(current_value, options):
+    current_text = str(current_value).strip()
+    if current_text:
+        return current_text
+    if options:
+        return str(options[0]).strip()
+    return ""
+
+
+def _format_path_option(value):
+    text = str(value).strip()
+    if not text:
+        return "输入路径或从 data 文件夹选择"
+    text = text.replace("\\", "/")
+    if text.startswith("../data/"):
+        return text
+    if "/data/" in text:
+        return "..." + text[text.rfind("/data/") :]
+    return text
+
+
+def _find_option_index(options, value):
+    value = str(value).strip()
+    for index, option in enumerate(options):
+        if str(option).strip() == value:
+            return index
+    return 0
 
 
 def _folder_path_input(label, current_value, key):
@@ -845,7 +872,8 @@ def _find_project_rasters():
                     relative_path = path.relative_to(project_root)
                     paths.append(str(relative_path).replace("\\", "/"))
                 else:
-                    paths.append(str(path))
+                    relative_path = path.relative_to(project_root.parent)
+                    paths.append("../" + str(relative_path).replace("\\", "/"))
 
     paths = sorted(set(paths))
     if len(paths) > 500:
@@ -911,25 +939,47 @@ def _render_extra_env_factor_form(items, project_rasters):
     result = []
     for index in range(len(rows)):
         row = rows[index]
-        c_name, c_path = st.columns([1, 3])
-        with c_name:
-            name_value = st.text_input(
-                "因子名称",
-                value=row.get("name", ""),
-                key=f"wizard_extra_env_name_{index}",
-                placeholder="如 soil、nightlight",
-            )
-        with c_path:
-            path_value = _raster_path_input(
-                "因子栅格",
-                row.get("path", ""),
-                project_rasters,
-                f"wizard_extra_env_path_{index}",
-                compact=True,
-            )
+        name_value, path_value = _render_extra_env_factor_row(row, project_rasters, index)
         if str(name_value).strip() and str(path_value).strip():
             result.append({"name": str(name_value).strip(), "path": str(path_value).strip()})
     return result
+
+
+def _render_extra_env_factor_row(row, project_rasters, index):
+    name_key = f"wizard_extra_env_name_{index}"
+    path_key = f"wizard_extra_env_path_{index}"
+    select_key = path_key + "_path_combo"
+    pending_key = path_key + "_pending_path"
+
+    if pending_key in st.session_state:
+        st.session_state[select_key] = st.session_state[pending_key]
+        del st.session_state[pending_key]
+    if name_key not in st.session_state:
+        st.session_state[name_key] = row.get("name", "")
+    options = _build_path_options(row.get("path", ""), project_rasters, st.session_state.get(select_key, ""))
+    if select_key not in st.session_state:
+        st.session_state[select_key] = _initial_path_value(row.get("path", ""), options)
+
+    label_col, name_col, path_col, browse_col, delete_col = st.columns([1.2, 1.8, 5.2, 0.8, 0.8])
+    with label_col:
+        st.markdown("**扩展因子**")
+    with delete_col:
+        if st.button("删除", key=f"wizard_extra_env_delete_{index}", use_container_width=True):
+            st.session_state[name_key] = ""
+            st.session_state[select_key] = ""
+            st.rerun()
+    with browse_col:
+        if st.button("浏览", key=f"wizard_extra_env_browse_{index}", use_container_width=True):
+            picked_path = _open_windows_file_dialog("扩展环境因子")
+            if picked_path:
+                st.session_state[pending_key] = picked_path
+                st.rerun()
+    with name_col:
+        name_value = st.text_input("因子名称", key=name_key, label_visibility="collapsed", placeholder="如土壤、夜光")
+    with path_col:
+        path_value = _render_path_combo("路径", options, select_key)
+
+    return name_value, path_value
 
 
 def _prepare_fixed_rows(items, count, empty_row):
@@ -942,30 +992,48 @@ def _prepare_fixed_rows(items, count, empty_row):
 
 
 def _render_year_raster_form(label, text_value, project_rasters, key_prefix):
+    st.markdown(f'<div class="history-group-title">{label}</div>', unsafe_allow_html=True)
     items = _parse_year_path_items(text_value)
     rows = _prepare_fixed_rows(items, 6, {"year": "", "path": ""})
     result = []
     for index in range(len(rows)):
         row = rows[index]
-        c_year, c_path = st.columns([1, 3])
-        with c_year:
-            year_value = st.text_input(
-                "年份",
-                value=str(row.get("year", "")),
-                key=f"{key_prefix}_year_{index}",
-                placeholder="2020",
-            )
-        with c_path:
-            path_value = _raster_path_input(
-                label + " 栅格",
-                row.get("path", ""),
-                project_rasters,
-                f"{key_prefix}_path_{index}",
-                compact=True,
-            )
+        year_value, path_value = _render_year_raster_row(row, project_rasters, key_prefix, index)
         if str(year_value).strip() and str(path_value).strip():
             result.append({"year": str(year_value).strip(), "path": str(path_value).strip()})
     return _build_year_path_text(result)
+
+
+def _render_year_raster_row(row, project_rasters, key_prefix, index):
+    year_key = f"{key_prefix}_year_{index}"
+    path_key = f"{key_prefix}_path_{index}"
+    select_key = path_key + "_path_combo"
+    pending_key = path_key + "_pending_path"
+
+    if pending_key in st.session_state:
+        st.session_state[select_key] = st.session_state[pending_key]
+        del st.session_state[pending_key]
+    if year_key not in st.session_state:
+        st.session_state[year_key] = str(row.get("year", ""))
+    options = _build_path_options(row.get("path", ""), project_rasters, st.session_state.get(select_key, ""))
+    if select_key not in st.session_state:
+        st.session_state[select_key] = _initial_path_value(row.get("path", ""), options)
+
+    row_label_col, year_col, path_col, browse_col = st.columns([1.2, 0.85, 6.1, 0.85])
+    with row_label_col:
+        st.caption("年份数据")
+    with year_col:
+        year_value = st.text_input("年份", key=year_key, label_visibility="collapsed", placeholder="2020")
+    with path_col:
+        path_value = _render_path_combo("路径", options, select_key)
+    with browse_col:
+        if st.button("浏览", key=f"{path_key}_browse", use_container_width=True):
+            picked_path = _open_windows_file_dialog("历史栅格")
+            if picked_path:
+                st.session_state[pending_key] = picked_path
+                st.rerun()
+
+    return year_value, path_value
 
 
 def _parse_year_path_items(text_value):
@@ -1044,17 +1112,64 @@ def _env_candidate_words(role):
     return []
 
 
-def _find_required_missing(agbd_path, tcc_path, lulc_base_path, lulc_target_path):
+def _find_data_missing(
+    agbd_path,
+    tcc_path,
+    lulc_base_path,
+    lulc_target_path,
+    drivers_path,
+    reserve_path,
+    history_agbd_paths,
+    history_tcc_paths,
+    history_lulc_paths,
+):
     items = [
-        ("AGBD", agbd_path),
-        ("TCC", tcc_path),
-        ("基准年 LULC", lulc_base_path),
-        ("目标年 LULC", lulc_target_path),
+        ("森林地上生物量密度（AGBD）基准栅格", agbd_path),
+        ("树冠覆盖度基准栅格", tcc_path),
+        ("基准年土地利用栅格", lulc_base_path),
+        ("目标年预测土地利用栅格", lulc_target_path),
+        ("森林损失驱动因素栅格", drivers_path),
+        ("自然保护区栅格", reserve_path),
     ]
     missing = []
     for name, path_text in items:
         if not path_exists(path_text):
             missing.append(name)
+
+    history_missing = _find_history_data_missing(history_agbd_paths, history_tcc_paths, history_lulc_paths)
+    missing.extend(history_missing)
+    return missing
+
+
+def _find_history_data_missing(history_agbd_paths, history_tcc_paths, history_lulc_paths):
+    agbd_paths = parse_year_raster_paths(history_agbd_paths)
+    tcc_paths = parse_year_raster_paths(history_tcc_paths)
+    lulc_paths = parse_year_raster_paths(history_lulc_paths)
+
+    missing = []
+    common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
+    valid_years = []
+    for year in common_years:
+        if not path_exists(agbd_paths[year]):
+            continue
+        if not path_exists(tcc_paths[year]):
+            continue
+        if not path_exists(lulc_paths[year]):
+            continue
+        valid_years.append(year)
+
+    if len(valid_years) < 2:
+        missing.append("历史训练数据至少需要两个共同年份的AGBD、树冠覆盖度和土地利用栅格")
+        return missing
+
+    has_adjacent_years = False
+    for index in range(len(valid_years) - 1):
+        if int(valid_years[index + 1]) - int(valid_years[index]) == 1:
+            has_adjacent_years = True
+            break
+    if not has_adjacent_years:
+        missing.append("历史训练数据需要至少一组连续年份")
+
     return missing
 
 
@@ -1109,6 +1224,8 @@ def _clear_data_widget_state():
         if key.startswith("wizard_") and (
             key.endswith("_path_text")
             or key.endswith("_project_select")
+            or key.endswith("_path_combo")
+            or key.endswith("_pending_path")
             or key.startswith("wizard_extra_env_")
             or key == "wizard_extra_env_count"
             or key.startswith("wizard_hist_")
@@ -1123,18 +1240,18 @@ def _go_to_step(step_index):
 
 
 def _data_ready(config):
-    if not config.use_raster_data:
-        return config.grid_rows > 0 and config.grid_cols > 0
-    required = [
+    missing = _find_data_missing(
         config.agbd_raster_path,
         config.tcc_raster_path,
         config.lulc_base_raster_path,
         config.lulc_target_raster_path,
-    ]
-    for item in required:
-        if not path_exists(item):
-            return False
-    return True
+        config.drivers_raster_path,
+        config.reserve_raster_path,
+        config.history_agbd_paths,
+        config.history_tcc_paths,
+        config.history_lulc_paths,
+    )
+    return len(missing) == 0
 
 
 def _scenario_ready(config):

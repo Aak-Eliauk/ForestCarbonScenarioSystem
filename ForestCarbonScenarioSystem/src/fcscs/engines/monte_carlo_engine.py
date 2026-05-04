@@ -266,10 +266,13 @@ class AGBDModelEngine:
         return rows, cols, predicted
 
     def _train_models(self, config, event_tables, surfaces, rng):
-        if self._history_training_ready(config):
+        if getattr(config, "use_history_training", False) and getattr(config, "use_raster_data", False):
+            if not self._history_training_ready(config):
+                raise ValueError("历史训练数据不足：请提供至少两个共同年份的AGBD、树冠覆盖度和土地利用栅格。")
             history_result = self._train_models_from_history(config, event_tables, surfaces, rng)
             if history_result is not None:
                 return history_result
+            raise ValueError("历史训练样本为空：请检查历史AGBD、树冠覆盖度、土地利用和森林损失驱动因素栅格。")
 
         models = {}
         baseline_df = self._build_baseline_training_df(config, surfaces, rng)
@@ -327,8 +330,14 @@ class AGBDModelEngine:
 
         agbd_paths = parse_year_raster_paths(getattr(config, "history_agbd_paths", ""))
         tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
-        common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()))
-        return len(common_years) >= 2
+        lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
+        common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
+        if len(common_years) < 2:
+            return False
+        for index in range(len(common_years) - 1):
+            if int(common_years[index + 1]) - int(common_years[index]) == 1:
+                return True
+        return False
 
     def _train_models_from_history(self, config, event_tables, surfaces, rng):
         history = self._load_history_rasters(config)
@@ -367,7 +376,7 @@ class AGBDModelEngine:
         agbd_paths = parse_year_raster_paths(getattr(config, "history_agbd_paths", ""))
         tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
         lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
-        common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()))
+        common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
             return None
 
@@ -381,21 +390,21 @@ class AGBDModelEngine:
                 continue
             if not path_exists(tcc_paths[year]):
                 continue
+            if not path_exists(lulc_paths[year]):
+                continue
             agbd, _ = read_raster(agbd_paths[year], make_float=True)
             tcc, _ = read_raster(tcc_paths[year], make_float=True)
+            lulc, _ = read_raster(lulc_paths[year])
             tcc = self._normalize_percent_surface(tcc)
             if reference_shape is None:
                 reference_shape = agbd.shape
-            if agbd.shape != reference_shape or tcc.shape != reference_shape:
+            if agbd.shape != reference_shape or tcc.shape != reference_shape or lulc.shape != reference_shape:
                 continue
             agbd_by_year[year] = agbd
             tcc_by_year[year] = tcc
-            if year in lulc_paths and path_exists(lulc_paths[year]):
-                lulc, _ = read_raster(lulc_paths[year])
-                if lulc.shape == reference_shape:
-                    lulc_by_year[year] = lulc
+            lulc_by_year[year] = lulc
 
-        years = sorted(set(agbd_by_year.keys()) & set(tcc_by_year.keys()))
+        years = sorted(set(agbd_by_year.keys()) & set(tcc_by_year.keys()) & set(lulc_by_year.keys()))
         if len(years) < 2:
             return None
 

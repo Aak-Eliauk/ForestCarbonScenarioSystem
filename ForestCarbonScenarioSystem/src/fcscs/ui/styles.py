@@ -95,7 +95,7 @@ def apply_base_style():
         }
 
         [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-            padding: 1.35rem 1rem 1.25rem 1rem;
+            padding: 0.55rem 1rem 1.25rem 1rem;
         }
 
         [data-testid="stSidebar"] * {
@@ -112,9 +112,9 @@ def apply_base_style():
         }
 
         .sidebar-brand {
-            padding: 0.15rem 0 1rem 0;
+            padding: 0 0 0.85rem 0;
             border-bottom: 1px solid rgba(255, 250, 240, 0.16);
-            margin-bottom: 1.05rem;
+            margin-bottom: 0.9rem;
         }
 
         .brand-lockup {
@@ -264,6 +264,67 @@ def apply_base_style():
             color: #173f2e;
             font-weight: 700;
             font-size: 0.82rem;
+        }
+
+        .data-section-title {
+            margin: 1.25rem 0 0.62rem 0;
+            padding: 0.72rem 0.9rem;
+            border-left: 5px solid #245f43;
+            border-radius: 8px;
+            background: linear-gradient(90deg, rgba(36, 95, 67, 0.12), rgba(255, 255, 255, 0.42));
+            color: #173d2d;
+            font-size: 1.02rem;
+            font-weight: 800;
+            box-shadow: 0 8px 18px rgba(68, 88, 73, 0.05);
+        }
+
+        .data-section-title span {
+            display: block;
+            margin-top: 0.18rem;
+            color: #64756a;
+            font-size: 0.78rem;
+            font-weight: 520;
+            line-height: 1.55;
+        }
+
+        .history-group-title {
+            margin: 0.85rem 0 0.4rem 0;
+            color: #173d2d;
+            font-size: 0.95rem;
+            font-weight: 800;
+        }
+
+        .data-check-card {
+            margin: 1rem 0 0.85rem 0;
+            padding: 0.85rem 1rem;
+            border-radius: 8px;
+            border: 1px solid rgba(38, 83, 59, 0.14);
+            background: rgba(255, 255, 255, 0.72);
+            color: #213b30;
+            box-shadow: 0 10px 24px rgba(68, 88, 73, 0.06);
+        }
+
+        .data-check-card.ok {
+            border-color: rgba(37, 118, 76, 0.28);
+            background: rgba(232, 246, 234, 0.76);
+        }
+
+        .data-check-card.warn {
+            border-color: rgba(197, 97, 40, 0.25);
+            background: rgba(255, 244, 226, 0.78);
+        }
+
+        .data-check-card strong {
+            display: block;
+            margin-bottom: 0.25rem;
+            font-size: 0.96rem;
+            color: #173d2d;
+        }
+
+        .data-check-card p {
+            margin: 0.18rem 0;
+            line-height: 1.56;
+            color: #43554a;
         }
 
         .uncertainty-card-grid {
