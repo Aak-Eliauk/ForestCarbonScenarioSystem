@@ -113,6 +113,7 @@ class MonteCarloEngine:
 
         return {
             "scenario_name": config.scenario_name,
+            "batch_name": getattr(config, "batch_name", config.scenario_name),
             "n_simulations": int(config.mc_n_simulations),
             "grid_rows": int(config.grid_rows),
             "grid_cols": int(config.grid_cols),
@@ -883,8 +884,8 @@ class AGBDModelEngine:
         return env_map
 
     def _build_raster_output_dir(self, config):
-        scenario_dir = sanitize_scenario_name(config.scenario_name)
-        output_dir = resolve_output_dir(getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")) / "raster_predictions" / scenario_dir
+        batch_dir = sanitize_scenario_name(getattr(config, "batch_name", config.scenario_name), default="运行批次")
+        output_dir = resolve_output_dir(getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")) / batch_dir / "raster_predictions"
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
@@ -974,6 +975,7 @@ class ReportEngine:
         rows = []
         labels = {
             "scenario_name": "情景名称",
+            "batch_name": "运行批次",
             "n_simulations": "模拟次数",
             "grid_rows": "网格行数",
             "grid_cols": "网格列数",

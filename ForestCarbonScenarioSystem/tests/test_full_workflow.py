@@ -148,6 +148,7 @@ class FullWorkflowTest(unittest.TestCase):
         loaded = ScenarioConfig.from_yaml(path)
 
         self.assertEqual(loaded.scenario_name, config.scenario_name)
+        self.assertEqual(loaded.batch_name, config.batch_name)
         self.assertEqual(loaded.grid_rows, config.grid_rows)
         self.assertEqual(loaded.grid_cols, config.grid_cols)
         self.assertEqual(loaded.ml_sample_count, config.ml_sample_count)
@@ -263,6 +264,7 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertGreater(bundle.summary["mean_agbd_per_ha"], 0)
         self.assertIn("mean_AGBD_tif", bundle.output_files)
         self.assertTrue(Path(bundle.output_files["mean_AGBD_tif"]).exists())
+        self.assertIn(config.batch_name, bundle.output_files["mean_AGBD_tif"])
         self.assertTrue(report.output_files)
 
     def test_history_training_uses_driver_sample_weight(self):

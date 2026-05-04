@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 import yaml
 
@@ -40,7 +41,7 @@ def build_default_year_paths(folder_name, file_prefix):
     return "\n".join(lines)
 
 
-def sanitize_scenario_name(value, default="BAU", max_length=80):
+def sanitize_scenario_name(value, default="基准情景", max_length=80):
     text = str(value).strip()
     if not text:
         text = str(default)
@@ -66,10 +67,16 @@ def sanitize_scenario_name(value, default="BAU", max_length=80):
     return safe_name or str(default)
 
 
+def build_default_batch_name():
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return "运行批次_" + timestamp
+
+
 class ScenarioConfig:
     def __init__(
         self,
-        scenario_name="BAU",
+        scenario_name="基准情景",
+        batch_name=None,
         base_year=2022,
         target_year=2035,
         future_years=None,
@@ -131,6 +138,9 @@ class ScenarioConfig:
         output_dir="../ForestCarbonScenarioSystem_outputs",
     ):
         self.scenario_name = sanitize_scenario_name(scenario_name)
+        if batch_name is None:
+            batch_name = build_default_batch_name()
+        self.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
         self.base_year = int(base_year)
         self.target_year = int(target_year)
         if future_years is None:
@@ -202,6 +212,7 @@ class ScenarioConfig:
     def to_dict(self):
         return {
             "scenario_name": self.scenario_name,
+            "batch_name": self.batch_name,
             "base_year": self.base_year,
             "target_year": self.target_year,
             "future_years": list(self.future_years),
@@ -270,10 +281,13 @@ class ScenarioConfig:
 
 
 def list_preset_names():
-    return ["BAU", "生态保育", "城镇控制", "采伐控制", "平衡发展"]
+    return ["基准情景", "生态保育", "城镇控制", "采伐控制", "平衡发展"]
 
 
 def build_preset_config(preset_name):
+    if preset_name == "BAU":
+        preset_name = "基准情景"
+
     if preset_name == "生态保育":
         return ScenarioConfig(
             scenario_name="生态保育",

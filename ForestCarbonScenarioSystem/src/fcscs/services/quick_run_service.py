@@ -42,8 +42,8 @@ def build_quick_raster_config(config, quick_size):
             optional_items.append(("环境因子-" + name, path_text))
     validate_raster_alignment(required_items + optional_items, "快速测试栅格")
 
-    scenario_dir = sanitize_scenario_name(config.scenario_name)
-    output_dir = resolve_output_dir(config.output_dir) / "quick_test_inputs" / scenario_dir
+    batch_dir = sanitize_scenario_name(str(getattr(config, "batch_name", config.scenario_name)) + "_快速测试", default="运行批次")
+    output_dir = resolve_output_dir(config.output_dir) / batch_dir / "quick_test_inputs"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     agbd_path = resolve_input_path(config.agbd_raster_path)
@@ -82,6 +82,7 @@ def build_quick_raster_config(config, quick_size):
 
     quick_config = config.copy()
     quick_config.scenario_name = sanitize_scenario_name(config.scenario_name + "_quick_test")
+    quick_config.batch_name = batch_dir
     quick_config.agbd_raster_path = str(clipped_paths["agbd"])
     quick_config.tcc_raster_path = str(clipped_paths["tcc"])
     quick_config.lulc_base_raster_path = str(clipped_paths["lulc_base"])

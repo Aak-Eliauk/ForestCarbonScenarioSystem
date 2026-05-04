@@ -6,7 +6,7 @@ import traceback
 import pandas as pd
 import streamlit as st
 
-from fcscs.config.defaults import ScenarioConfig, build_preset_config, list_preset_names, sanitize_scenario_name
+from fcscs.config.defaults import ScenarioConfig, build_default_batch_name, build_preset_config, list_preset_names, sanitize_scenario_name
 from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists
 from fcscs.services.quick_run_service import build_quick_config
 from fcscs.services.workflow_service import run_simulation_workflow
@@ -21,7 +21,7 @@ from fcscs.ui.app_state import (
     set_report_bundle,
     set_simulation_bundle,
 )
-from fcscs.ui.common import get_output_directory
+from fcscs.ui.common import get_batch_output_directory, get_output_directory
 from fcscs.ui.result_views import export_report
 from fcscs.ui.styles import render_page_banner
 
@@ -145,7 +145,7 @@ def _render_data_step(current):
     lulc_base_raster_path = _raster_path_input("基准年土地利用栅格", current.lulc_base_raster_path, project_rasters, "wizard_lulc_base")
     lulc_target_raster_path = _raster_path_input("目标年预测土地利用栅格", current.lulc_target_raster_path, project_rasters, "wizard_lulc_target")
 
-    _render_section_title("扰动与约束数据", "森林损失驱动因素用于识别采伐发生位置，自然保护区用于避让约束。")
+    _render_section_title("扰动与约束数据", "森林损失驱动因素用于识别采伐发生位置，自然保护区用于约束采伐区域。")
     drivers_raster_path = _raster_path_input("森林损失驱动因素栅格", current.drivers_raster_path, project_rasters, "wizard_drivers")
     reserve_raster_path = _raster_path_input("自然保护区栅格", current.reserve_raster_path, project_rasters, "wizard_reserve")
 
@@ -165,7 +165,7 @@ def _render_data_step(current):
     with st.expander("其他环境因子"):
         extra_env_items = _render_extra_env_factor_form(extra_env_items, project_rasters)
 
-    _render_section_title("历史训练数据", "必填。连续年份树冠覆盖度用于量化森林损失强度，Drivers 用于定位采伐发生位置。")
+    _render_section_title("历史训练数据", "连续年份树冠覆盖度用于量化森林损失强度，并用森林损失驱动因素数据定位采伐发生位置。")
     with st.expander("历史训练数据输入", expanded=True):
         use_history_training = True
         st.caption("至少需要两组相同年份的历史森林地上生物量密度、树冠覆盖度和土地利用栅格，系统会按相邻年份构造训练样本。")
@@ -259,16 +259,17 @@ def _render_data_step(current):
 def _render_scenario_step(current):
     st.subheader("2 情景方案")
 
-    c0, c_load = st.columns([3, 1])
-    with c0:
-        preset_name = st.selectbox("预设方案", list_preset_names(), key="wizard_preset")
-    with c_load:
-        st.write("")
-        if st.button("载入预设", use_container_width=True, key="wizard_load_preset"):
-            preset_config = build_preset_config(preset_name)
-            _copy_data_settings(current, preset_config)
-            _save_and_clear(preset_config)
-            st.rerun()
+    preset_names = list_preset_names()
+    if st.session_state.get("wizard_preset") not in (None, *preset_names):
+        del st.session_state["wizard_preset"]
+    preset_index = _find_preset_index(current.scenario_name, preset_names)
+    preset_name = st.selectbox(
+        "预设方案",
+        preset_names,
+        index=preset_index,
+        key="wizard_preset",
+        on_change=_apply_selected_preset,
+    )
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -398,8 +399,34 @@ def _render_scenario_step(current):
             _go_to_step(2)
 
 
+def _find_preset_index(scenario_name, preset_names):
+    name = str(scenario_name).strip()
+    if name == "BAU":
+        name = "基准情景"
+    for index, preset_name in enumerate(preset_names):
+        if preset_name == name:
+            return index
+    return 0
+
+
+def _apply_selected_preset():
+    preset_name = st.session_state.get("wizard_preset", "基准情景")
+    current = get_config()
+    preset_config = build_preset_config(preset_name)
+    _copy_data_settings(current, preset_config)
+    _save_and_clear(preset_config)
+
+
 def _render_run_step(config):
     st.subheader("3 运行检查")
+
+    batch_name = st.text_input("运行批次名", value=getattr(config, "batch_name", build_default_batch_name()), key="wizard_batch_name")
+    batch_preview_config = config.copy()
+    batch_preview_config.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
+    batch_dir = get_batch_output_directory(batch_preview_config, create=False)
+    st.caption("本次结果将保存到：" + str(batch_dir))
+    if batch_dir.exists():
+        st.warning("该批次目录已经存在。开始运行时系统会自动追加时间后缀，避免覆盖已有结果。")
 
     checks = _build_preflight_rows(config)
     st.dataframe(pd.DataFrame(checks), use_container_width=True, hide_index=True)
@@ -440,7 +467,9 @@ def _render_run_step(config):
 
     if run_clicked:
         _clear_results_only()
-        _run_with_progress(config, run_mode, int(quick_size), progress_bar, status_table, message_box, log_table)
+        run_config = _prepare_run_config(config, batch_name)
+        set_config(run_config)
+        _run_with_progress(run_config, run_mode, int(quick_size), progress_bar, status_table, message_box, log_table)
 
     if get_report_bundle() is not None:
         _render_run_complete_actions()
@@ -455,6 +484,19 @@ def _render_run_complete_actions():
         if st.button("查看结果", type="primary", use_container_width=True, key="wizard_go_to_results_after_run"):
             st.session_state["sidebar_panel"] = "results"
             st.rerun()
+
+
+def _prepare_run_config(config, batch_name):
+    run_config = config.copy()
+    safe_batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
+    run_config.batch_name = safe_batch_name
+
+    batch_dir = get_batch_output_directory(run_config, create=False)
+    if batch_dir.exists():
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_config.batch_name = sanitize_scenario_name(safe_batch_name + "_" + timestamp)
+
+    return run_config
 
 
 def _render_progress_area():
@@ -481,7 +523,7 @@ def _render_progress_area():
 def _run_with_progress(config, run_mode, quick_size, progress_bar, status_table, message_box, log_table):
     run_label = run_mode
     run_config = config
-    log_path = _start_run_log(config)
+    log_path = None
 
     try:
         _update_progress(progress_bar, status_table, message_box, log_table, log_path, 1, "检查输入", "正在读取已保存的配置。")
@@ -490,6 +532,9 @@ def _run_with_progress(config, run_mode, quick_size, progress_bar, status_table,
             _update_progress(progress_bar, status_table, message_box, log_table, log_path, 8, "准备快速测试", "正在准备快速测试输入。")
             run_config = build_quick_config(config, quick_size)
             run_label = "快速测试"
+
+        log_path = _start_run_log(run_config)
+        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 10, "检查输入", "运行批次：" + str(getattr(run_config, "batch_name", "")))
 
         result = run_simulation_workflow(
             run_config,
@@ -508,7 +553,7 @@ def _run_with_progress(config, run_mode, quick_size, progress_bar, status_table,
         set_logging_patch_library(result.patch_library)
         set_simulation_bundle(result.simulation_bundle)
         set_report_bundle(result.report_bundle)
-        export_dir = get_output_directory(config) / "report_exports" / sanitize_scenario_name(result.report_bundle.scenario_name)
+        export_dir = get_batch_output_directory(run_config) / "report_exports"
         export_report(result.report_bundle, export_dir)
 
         _add_history_from_bundle(result.simulation_bundle, run_label)
@@ -560,6 +605,7 @@ def _build_run_stage_frame(current_stage):
 def _add_history_from_bundle(bundle, run_label):
     row = {
         "运行方式": run_label,
+        "运行批次": bundle.summary.get("batch_name", ""),
         "情景名称": bundle.scenario_name,
         "模拟次数": bundle.summary["n_simulations"],
         "平均AGBD": round(bundle.summary["mean_agbd_per_ha"], 4),
@@ -572,7 +618,7 @@ def _add_history_from_bundle(bundle, run_label):
 
 def _start_run_log(config):
     st.session_state[RUN_LOG_KEY] = []
-    log_dir = get_output_directory(config) / "run_logs"
+    log_dir = get_batch_output_directory(config) / "run_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     log_path = log_dir / (timestamp + "_" + sanitize_scenario_name(config.scenario_name) + ".log")
@@ -613,10 +659,13 @@ def _render_log_table(log_table):
 
 def _get_recent_log_files(limit=12):
     config = get_config()
-    log_dir = get_output_directory(config) / "run_logs"
-    if not log_dir.exists():
-        return []
-    return sorted(log_dir.glob("*.log"), key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
+    output_dir = get_output_directory(config, create=False)
+    log_files = []
+    if output_dir.exists():
+        for path in output_dir.glob("*/run_logs/*.log"):
+            if path.is_file():
+                log_files.append(path)
+    return sorted(log_files, key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
 
 
 def _render_recent_log_files(log_files):
@@ -1225,6 +1274,7 @@ def _copy_data_settings(source, target):
     target.reserve_value = source.reserve_value
     target.write_raster_outputs = source.write_raster_outputs
     target.output_dir = source.output_dir
+    target.batch_name = source.batch_name
     target.grid_rows = source.grid_rows
     target.grid_cols = source.grid_cols
 
@@ -1296,7 +1346,7 @@ def _scenario_ready(config):
 
 def _output_dir_ready(config):
     try:
-        get_output_directory(config)
+        get_output_directory(config, create=False)
         return True
     except Exception:
         return False

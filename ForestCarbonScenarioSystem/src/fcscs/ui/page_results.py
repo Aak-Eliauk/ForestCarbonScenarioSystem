@@ -3,10 +3,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from fcscs.config.defaults import sanitize_scenario_name
 from fcscs.domain.models import ReportBundle
 from fcscs.ui.app_state import get_config, get_report_bundle, get_simulation_bundle
-from fcscs.ui.common import get_output_directory
+from fcscs.ui.common import get_batch_output_directory, get_output_directory
 from fcscs.ui.result_views import (
     export_report,
     render_detail_tables,
@@ -64,7 +63,7 @@ def _render_current_result(report, bundle):
 
     st.info("运行成功后系统会自动保存结果。下方按钮用于手动重新保存或覆盖同名历史报告。")
     if st.button("重新保存当前结果", type="primary", use_container_width=True, key="save_current_report_history"):
-        export_dir = get_output_directory(get_config()) / "report_exports" / sanitize_scenario_name(report.scenario_name)
+        export_dir = get_batch_output_directory(get_config()) / "report_exports"
         export_report(report, export_dir)
         st.success("结果已保存到：" + str(export_dir))
 
@@ -96,42 +95,46 @@ def _render_result_tabs(report, bundle):
 
 
 def _discover_history_results():
-    output_dir = get_output_directory(get_config())
+    output_dir = get_output_directory(get_config(), create=False)
     items = []
 
-    export_root = output_dir / "report_exports"
-    if export_root.exists():
-        for scenario_dir in sorted(export_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
-            if not scenario_dir.is_dir():
+    if output_dir.exists():
+        for batch_dir in sorted(output_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
+            if not batch_dir.is_dir():
                 continue
-            if not (scenario_dir / "summary.csv").exists() and not (scenario_dir / "simulation_distribution.csv").exists():
+            report_dir = batch_dir / "report_exports"
+            if not report_dir.exists():
+                continue
+            if not (report_dir / "summary.csv").exists() and not (report_dir / "simulation_distribution.csv").exists():
                 continue
             items.append(
                 {
                     "kind": "report",
-                    "scenario_name": scenario_dir.name,
-                    "path": scenario_dir,
-                    "label": "历史报告：" + scenario_dir.name,
+                    "scenario_name": _read_summary_value(report_dir, "scenario_name", batch_dir.name),
+                    "batch_name": batch_dir.name,
+                    "path": report_dir,
+                    "label": "历史批次：" + batch_dir.name,
                 }
             )
 
-    known_scenarios = {str(item["scenario_name"]) for item in items}
-    raster_root = output_dir / "raster_predictions"
-    if raster_root.exists():
-        for scenario_dir in sorted(raster_root.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
-            if not scenario_dir.is_dir():
+    known_batches = {str(item["batch_name"]) for item in items}
+    if output_dir.exists():
+        for batch_dir in sorted(output_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
+            if not batch_dir.is_dir():
                 continue
-            if scenario_dir.name in known_scenarios:
+            if batch_dir.name in known_batches:
                 continue
-            output_files = _find_raster_output_files(scenario_dir)
+            raster_dir = batch_dir / "raster_predictions"
+            output_files = _find_raster_output_files(raster_dir)
             if not output_files:
                 continue
             items.append(
                 {
                     "kind": "raster",
-                    "scenario_name": scenario_dir.name,
-                    "path": scenario_dir,
-                    "label": "历史栅格：" + scenario_dir.name,
+                    "scenario_name": batch_dir.name,
+                    "batch_name": batch_dir.name,
+                    "path": raster_dir,
+                    "label": "历史栅格：" + batch_dir.name,
                 }
             )
 
@@ -199,7 +202,7 @@ def _load_export_output_files(export_dir):
     if output_files:
         return output_files
 
-    raster_dir = get_output_directory(get_config()) / "raster_predictions" / sanitize_scenario_name(export_dir.name)
+    raster_dir = export_dir.parent / "raster_predictions"
     return _find_raster_output_files(raster_dir)
 
 
@@ -220,3 +223,15 @@ def _read_csv_if_exists(path):
         return pd.read_csv(path)
     except Exception:
         return None
+
+
+def _read_summary_value(export_dir, metric_name, default_value):
+    summary_df = _read_csv_if_exists(export_dir / "summary.csv")
+    if summary_df is None or summary_df.empty:
+        return default_value
+    for _, row in summary_df.iterrows():
+        if str(row.get("metric", "")) == metric_name:
+            value = row.get("value", default_value)
+            if value is not None and str(value).strip() != "":
+                return str(value)
+    return default_value

@@ -11,7 +11,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent
 APP_FILE = PROJECT_ROOT / "app.py"
 SRC_DIR = PROJECT_ROOT / "src"
-DEFAULT_OUTPUT_DIR = PROJECT_ROOT.parent / "ForestCarbonScenarioSystem_outputs"
+DEFAULT_OUTPUT_DIR = (PROJECT_ROOT.parent / "ForestCarbonScenarioSystem_outputs").resolve()
 HOST = "localhost"
 PORT = 8501
 SOFTWARE_FULL_NAME = "森林损失情景控制与蒙特卡洛碳储量模拟系统 V1.0"
@@ -29,6 +29,7 @@ def main():
     url = build_url(port)
 
     if "--check" in sys.argv:
+        print(f"默认输出目录: {DEFAULT_OUTPUT_DIR}")
         print("启动检查完成。")
         return
 
