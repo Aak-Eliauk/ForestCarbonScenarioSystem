@@ -121,7 +121,7 @@ class MonteCarloEngine:
             "ml_enabled": True,
             "ml_algorithm": "RandomForestRegressor",
             "ml_model_count": int(len(training_summary_df)),
-            "data_mode": "raster" if config.use_raster_data else "demo",
+            "data_mode": "raster",
             "baseline_agbd_mean": float(np.nanmean(baseline_agbd_surface)),
             "baseline_agc_mean": float(self._convert_agbd_value_to_agc(float(np.nanmean(baseline_agbd_surface)), config.agbd_to_agc_factor)),
             "mean_agbd_per_ha": float(np.nanmean(mean_agbd_per_sim)),
@@ -205,10 +205,9 @@ class MonteCarloEngine:
 class AGBDModelEngine:
     def prepare_context(self, config, event_tables):
         rng = np.random.default_rng(config.base_seed + 150)
-        if config.use_raster_data:
-            surfaces = self._build_raster_feature_surfaces(config, rng)
-        else:
-            surfaces = self._build_feature_surfaces(config, rng)
+        if not config.use_raster_data:
+            raise ValueError("演示网格模式已删除，请使用真实栅格数据运行系统。")
+        surfaces = self._build_raster_feature_surfaces(config, rng)
 
         models, training_sample_df = self._train_models(config, event_tables, surfaces, rng)
         training_summary_df = self._build_training_summary_df(models)
@@ -266,61 +265,17 @@ class AGBDModelEngine:
         return rows, cols, predicted
 
     def _train_models(self, config, event_tables, surfaces, rng):
-        if getattr(config, "use_history_training", False) and getattr(config, "use_raster_data", False):
-            if not self._history_training_ready(config):
-                raise ValueError("历史训练数据不足：请提供至少两个共同年份的AGBD、树冠覆盖度和土地利用栅格。")
-            history_result = self._train_models_from_history(config, event_tables, surfaces, rng)
-            if history_result is not None:
-                return history_result
-            raise ValueError("历史训练样本为空：请检查历史AGBD、树冠覆盖度、土地利用和森林损失驱动因素栅格。")
+        if not getattr(config, "use_raster_data", False):
+            raise ValueError("演示网格和简化训练已删除，请使用真实栅格数据运行系统。")
+        if not getattr(config, "use_history_training", False):
+            raise ValueError("模型训练必须启用历史数据，请补充历史AGBD、树冠覆盖度和土地利用栅格。")
+        if not self._history_training_ready(config):
+            raise ValueError("历史训练数据不足：请提供至少两个共同年份的AGBD、树冠覆盖度和土地利用栅格。")
 
-        models = {}
-        baseline_df = self._build_baseline_training_df(config, surfaces, rng)
-        baseline_features = self._baseline_feature_columns(surfaces)
-        models["baseline"] = self._fit_model(
-            "baseline",
-            baseline_df,
-            baseline_features,
-            config,
-            config.base_seed + 301,
-        )
-
-        logging_df = self._build_event_training_df(config, event_tables, "logging", surfaces, rng)
-        event_features = self._event_feature_columns(surfaces)
-        models["logging"] = self._fit_model(
-            "logging",
-            logging_df,
-            event_features,
-            config,
-            config.base_seed + 401,
-        )
-
-        urban_edge_df = self._build_event_training_df(config, event_tables, "urban_edge", surfaces, rng)
-        models["urban_edge"] = self._fit_model(
-            "urban_edge",
-            urban_edge_df,
-            event_features,
-            config,
-            config.base_seed + 402,
-        )
-
-        urban_conv_df = self._build_event_training_df(config, event_tables, "urban_conv", surfaces, rng)
-        models["urban_conv"] = self._fit_model(
-            "urban_conv",
-            urban_conv_df,
-            event_features,
-            config,
-            config.base_seed + 403,
-        )
-
-        training_sample_df = self._build_training_sample_df(
-            baseline_df,
-            logging_df,
-            urban_edge_df,
-            urban_conv_df,
-        )
-
-        return models, training_sample_df
+        history_result = self._train_models_from_history(config, event_tables, surfaces, rng)
+        if history_result is not None:
+            return history_result
+        raise ValueError("历史训练样本为空：请检查历史AGBD、树冠覆盖度、土地利用和森林损失驱动因素栅格。")
 
     def _history_training_ready(self, config):
         if not getattr(config, "use_history_training", False):
@@ -356,21 +311,35 @@ class AGBDModelEngine:
 
         logging_df = self._build_history_event_training_df(config, surfaces, history, "logging", rng)
         if logging_df.empty:
-            logging_df = self._build_event_training_df(config, event_tables, "logging", surfaces, rng)
-        models["logging"] = self._fit_model("logging", logging_df, event_features, config, config.base_seed + 702)
+            if self._future_event_has_rows(event_tables, "logging"):
+                raise ValueError("历史采伐训练样本为空：请检查Drivers分类、loss year波段、历史TCC和历史AGBD。")
+        else:
+            models["logging"] = self._fit_model("logging", logging_df, event_features, config, config.base_seed + 702)
 
         edge_df = self._build_history_event_training_df(config, surfaces, history, "urban_edge", rng)
         if edge_df.empty:
-            edge_df = self._build_event_training_df(config, event_tables, "urban_edge", surfaces, rng)
-        models["urban_edge"] = self._fit_model("urban_edge", edge_df, event_features, config, config.base_seed + 703)
+            if self._future_event_has_rows(event_tables, "urban_edge"):
+                raise ValueError("历史城镇边缘扰动训练样本为空：请检查历史土地利用和树冠覆盖度。")
+        else:
+            models["urban_edge"] = self._fit_model("urban_edge", edge_df, event_features, config, config.base_seed + 703)
 
         conv_df = self._build_history_event_training_df(config, surfaces, history, "urban_conv", rng)
         if conv_df.empty:
-            conv_df = self._build_event_training_df(config, event_tables, "urban_conv", surfaces, rng)
-        models["urban_conv"] = self._fit_model("urban_conv", conv_df, event_features, config, config.base_seed + 704)
+            if self._future_event_has_rows(event_tables, "urban_conv"):
+                raise ValueError("历史城镇转换训练样本为空：请检查历史土地利用和树冠覆盖度。")
+        else:
+            models["urban_conv"] = self._fit_model("urban_conv", conv_df, event_features, config, config.base_seed + 704)
 
         training_sample_df = self._build_training_sample_df(baseline_df, logging_df, edge_df, conv_df)
         return models, training_sample_df
+
+    def _future_event_has_rows(self, event_tables, event_type):
+        for event_table in event_tables:
+            if event_table.event_type != event_type:
+                continue
+            if not event_table.records.empty:
+                return True
+        return False
 
     def _load_history_rasters(self, config):
         agbd_paths = parse_year_raster_paths(getattr(config, "history_agbd_paths", ""))
@@ -411,10 +380,17 @@ class AGBDModelEngine:
         logging_probability = None
         urban_probability = None
         drivers_class = None
+        drivers_loss_year = None
         if path_exists(getattr(config, "drivers_raster_path", "")):
             drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
             if drivers_class.shape != reference_shape:
                 drivers_class = None
+            try:
+                drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
+                if drivers_loss_year.shape != reference_shape:
+                    drivers_loss_year = None
+            except Exception:
+                drivers_loss_year = None
             logging_probability = self._read_driver_probability(config, config.logging_probability_band, reference_shape)
             urban_probability = self._read_driver_probability(config, config.urban_probability_band, reference_shape)
 
@@ -424,6 +400,7 @@ class AGBDModelEngine:
             "tcc": tcc_by_year,
             "lulc": lulc_by_year,
             "drivers_class": drivers_class,
+            "drivers_loss_year": drivers_loss_year,
             "logging_probability": logging_probability,
             "urban_probability": urban_probability,
         }
@@ -556,6 +533,10 @@ class AGBDModelEngine:
             if drivers_class is None:
                 return None
             mask = drivers_class == int(config.logging_driver_value)
+            loss_year = history.get("drivers_loss_year")
+            if loss_year is not None:
+                encoded_year = loss_year.astype(np.int32) + 2000
+                mask = mask & (encoded_year == int(end_year))
             if end_year in history["lulc"]:
                 mask = mask & np.isin(history["lulc"][end_year], forest_codes)
             return mask & valid_mask
@@ -702,12 +683,12 @@ class AGBDModelEngine:
         clean_df = clean_df.dropna(subset=["target_agbd"])
 
         if len(clean_df) < 5:
-            fallback_df = training_df.copy()
+            checked_df = training_df.copy()
             for column in keep_columns:
-                fallback_df[column] = pd.to_numeric(fallback_df[column], errors="coerce")
-            fallback_df = fallback_df.replace([np.inf, -np.inf], np.nan)
-            fallback_df["target_agbd"] = fallback_df["target_agbd"].fillna(0.0)
-            return fallback_df
+                checked_df[column] = pd.to_numeric(checked_df[column], errors="coerce")
+            checked_df = checked_df.replace([np.inf, -np.inf], np.nan)
+            checked_df["target_agbd"] = checked_df["target_agbd"].fillna(0.0)
+            return checked_df
 
         return clean_df
 
@@ -749,14 +730,9 @@ class AGBDModelEngine:
         baseline_item = models["baseline"]
         rows.append(self._build_training_summary_row(baseline_item))
 
-        logging_item = models["logging"]
-        rows.append(self._build_training_summary_row(logging_item))
-
-        urban_edge_item = models["urban_edge"]
-        rows.append(self._build_training_summary_row(urban_edge_item))
-
-        urban_conv_item = models["urban_conv"]
-        rows.append(self._build_training_summary_row(urban_conv_item))
+        for model_name in ["logging", "urban_edge", "urban_conv"]:
+            if model_name in models:
+                rows.append(self._build_training_summary_row(models[model_name]))
 
         return pd.DataFrame(rows)
 
@@ -769,40 +745,6 @@ class AGBDModelEngine:
             "test_count": item["test_count"],
             "mae": item["mae"],
             "r2": item["r2"],
-        }
-
-    def _build_feature_surfaces(self, config, rng):
-        rows = config.grid_rows
-        cols = config.grid_cols
-
-        agbd_pre = np.zeros((rows, cols), dtype=np.float32)
-        tcc_pre = np.zeros((rows, cols), dtype=np.float32)
-        slope = np.zeros((rows, cols), dtype=np.float32)
-        moisture = np.zeros((rows, cols), dtype=np.float32)
-        accessibility = np.zeros((rows, cols), dtype=np.float32)
-
-        half_rows = max(1, rows - 1)
-        half_cols = max(1, cols - 1)
-
-        for row in range(rows):
-            for col in range(cols):
-                north_factor = 1.0 - row / half_rows
-                east_factor = col / half_cols
-                center_factor = self._calculate_center_factor(row, col, rows, cols)
-
-                agbd_pre[row, col] = self._build_agbd_pre_value(north_factor, center_factor, rng)
-                tcc_pre[row, col] = self._build_tcc_value(north_factor, center_factor, rng)
-                slope[row, col] = self._build_slope_value(row, center_factor, rng)
-                moisture[row, col] = self._build_moisture_value(north_factor, center_factor, rng)
-                accessibility[row, col] = self._build_accessibility_value(east_factor, center_factor, rng)
-
-        return {
-            "agbd_pre": agbd_pre,
-            "tcc_pre": tcc_pre,
-            "slope": slope,
-            "moisture": moisture,
-            "accessibility": accessibility,
-            "env_feature_names": ["slope", "moisture", "accessibility"],
         }
 
     def _build_raster_feature_surfaces(self, config, rng):
@@ -821,9 +763,9 @@ class AGBDModelEngine:
         config.grid_cols = int(cols)
 
         env_map = self._load_env_rasters(config, agbd_pre.shape)
-        slope = self._get_or_make_surface(env_map, ["slope", "Slope", "坡度"], agbd_pre.shape, "slope", rng)
-        moisture = self._get_or_make_surface(env_map, ["moisture", "MAP", "AET", "水分"], agbd_pre.shape, "moisture", rng)
-        accessibility = self._get_or_make_surface(env_map, ["accessibility", "DistRoadNet", "distance", "可达性"], agbd_pre.shape, "accessibility", rng)
+        slope = self._get_required_surface(env_map, ["slope", "Slope", "坡度", "地形"], "地形因子")
+        moisture = self._get_required_surface(env_map, ["moisture", "MAP", "AET", "水分", "降水"], "气候水分因子")
+        accessibility = self._get_required_surface(env_map, ["accessibility", "DistRoadNet", "distance", "可达性", "道路", "人为"], "人为活动因子")
         slope = self._normalize_slope_surface(slope)
         moisture = self._normalize_unit_surface(moisture, invert=False)
         accessibility = self._normalize_unit_surface(accessibility, invert=True)
@@ -856,6 +798,19 @@ class AGBDModelEngine:
 
         surfaces["env_feature_names"] = env_feature_names
         return surfaces
+
+    def _get_required_surface(self, env_map, candidate_names, label):
+        for name in candidate_names:
+            if name in env_map:
+                return env_map[name].astype(np.float32)
+
+        for name in env_map:
+            lower_name = name.lower()
+            for candidate in candidate_names:
+                if candidate.lower() in lower_name:
+                    return env_map[name].astype(np.float32)
+
+        raise ValueError(label + "缺失或尺寸不一致，请在数据准备中选择对应环境因子栅格。")
 
     def _clean_feature_name(self, name):
         text = str(name).strip()
@@ -927,137 +882,14 @@ class AGBDModelEngine:
             env_map[name] = data
         return env_map
 
-    def _get_or_make_surface(self, env_map, candidate_names, shape, kind, rng):
-        for name in candidate_names:
-            if name in env_map:
-                return env_map[name].astype(np.float32)
-
-        for name in env_map:
-            lower_name = name.lower()
-            for candidate in candidate_names:
-                if candidate.lower() in lower_name:
-                    return env_map[name].astype(np.float32)
-
-        return self._make_simple_fallback_surface(shape, kind, rng)
-
-    def _make_simple_fallback_surface(self, shape, kind, rng):
-        rows, cols = shape
-        surface = np.zeros(shape, dtype=np.float32)
-        row_denominator = max(rows - 1, 1)
-        col_denominator = max(cols - 1, 1)
-
-        for row in range(rows):
-            for col in range(cols):
-                north_factor = 1.0 - row / row_denominator
-                east_factor = col / col_denominator
-                if kind == "slope":
-                    value = 5.0 + abs(np.sin(row / 11.0)) * 8.0 + rng.uniform(-1.0, 1.0)
-                elif kind == "moisture":
-                    value = 0.25 + north_factor * 0.35 + rng.uniform(-0.04, 0.04)
-                    value = float(np.clip(value, 0.10, 0.95))
-                else:
-                    value = 0.15 + east_factor * 0.55 + rng.uniform(-0.03, 0.03)
-                    value = float(np.clip(value, 0.05, 0.98))
-                surface[row, col] = value
-        return surface
-
     def _build_raster_output_dir(self, config):
         scenario_dir = sanitize_scenario_name(config.scenario_name)
         output_dir = resolve_output_dir(getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")) / "raster_predictions" / scenario_dir
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 
-    def _calculate_center_factor(self, row, col, rows, cols):
-        row_center = (rows - 1) / 2
-        col_center = (cols - 1) / 2
-        row_distance = abs(row - row_center) / max(row_center, 1)
-        col_distance = abs(col - col_center) / max(col_center, 1)
-        center_distance = (row_distance + col_distance) / 2
-        center_factor = 1.0 - center_distance
-        if center_factor < 0.0:
-            center_factor = 0.0
-        return center_factor
-
-    def _build_agbd_pre_value(self, north_factor, center_factor, rng):
-        base_value = 85.0 + north_factor * 26.0 + center_factor * 12.0
-        noise_value = rng.uniform(-5.0, 5.0)
-        return max(base_value + noise_value, 0.0)
-
-    def _build_tcc_value(self, north_factor, center_factor, rng):
-        value = 0.38 + north_factor * 0.24 + center_factor * 0.18 + rng.uniform(-0.05, 0.05)
-        return float(np.clip(value, 0.18, 0.95))
-
-    def _build_slope_value(self, row, center_factor, rng):
-        terrain_wave = abs(np.sin(row / 9.0)) * 8.0
-        value = 5.0 + terrain_wave + (1.0 - center_factor) * 9.0 + rng.uniform(-1.2, 1.2)
-        return max(value, 0.0)
-
-    def _build_moisture_value(self, north_factor, center_factor, rng):
-        value = 0.28 + north_factor * 0.22 + center_factor * 0.20 + rng.uniform(-0.04, 0.04)
-        return self._clip_moisture(value)
-
-    def _build_accessibility_value(self, east_factor, center_factor, rng):
-        value = 0.18 + east_factor * 0.34 + (1.0 - center_factor) * 0.22 + rng.uniform(-0.03, 0.03)
-        return float(np.clip(value, 0.05, 0.98))
-
     def _clip_moisture(self, value):
         return float(np.clip(value, 0.10, 0.95))
-
-    def _build_baseline_training_df(self, config, surfaces, rng):
-        rows = config.grid_rows
-        cols = config.grid_cols
-        valid_ids = self._find_valid_training_cell_ids(surfaces, rows, cols)
-        sample_count = min(config.ml_sample_count, len(valid_ids))
-        chosen_ids = rng.choice(valid_ids, size=sample_count, replace=False)
-        years_forward = config.target_year - config.base_year
-        records = []
-
-        for cell_id in chosen_ids:
-            row = int(cell_id // cols)
-            col = int(cell_id % cols)
-            agbd_pre = float(surfaces["agbd_pre"][row, col])
-            tcc_pre = float(surfaces["tcc_pre"][row, col])
-            slope = float(surfaces["slope"][row, col])
-            moisture = float(surfaces["moisture"][row, col])
-            accessibility = float(surfaces["accessibility"][row, col])
-
-            target_agbd = self._build_baseline_target_value(
-                agbd_pre,
-                tcc_pre,
-                slope,
-                moisture,
-                accessibility,
-                years_forward,
-                rng,
-            )
-
-            record = {
-                "AGBD_pre": agbd_pre,
-                "TCC_pre": tcc_pre,
-                "span": float(years_forward),
-                "target_agbd": target_agbd,
-                "sample_weight": 1.0,
-            }
-            self._add_env_values_to_record(record, surfaces, row, col)
-            records.append(record)
-
-        return pd.DataFrame(records)
-
-    def _find_valid_training_cell_ids(self, surfaces, rows, cols):
-        valid_ids = []
-        for row in range(rows):
-            for col in range(cols):
-                agbd_pre = float(surfaces["agbd_pre"][row, col])
-                tcc_pre = float(surfaces["tcc_pre"][row, col])
-                if not np.isfinite(agbd_pre):
-                    continue
-                if not np.isfinite(tcc_pre):
-                    continue
-                valid_ids.append(row * cols + col)
-
-        if not valid_ids:
-            raise ValueError("AGBD/TCC 有效像元不足，无法训练基准预测模型。")
-        return np.array(valid_ids, dtype=int)
 
     def _ensure_min_valid_pixels(self, surface, name, minimum=5):
         valid_count = int(np.isfinite(surface).sum())
@@ -1065,132 +897,10 @@ class AGBDModelEngine:
         if valid_count < required:
             raise ValueError(f"{name} 有效像元不足：至少需要 {required} 个，当前 {valid_count} 个。")
 
-    def _build_baseline_target_value(self, agbd_pre, tcc_pre, slope, moisture, accessibility, span, rng):
-        growth_part = span * 1.55 + tcc_pre * 15.0 + moisture * 18.0
-        pressure_part = slope * 0.45 + accessibility * 8.0
-        noise_part = rng.normal(0.0, 3.5)
-        target_agbd = agbd_pre + growth_part - pressure_part + noise_part
-        return float(max(target_agbd, 0.0))
-
-    def _build_event_training_df(self, config, event_tables, event_type, surfaces, rng):
-        source_records = None
-        for event_table in event_tables:
-            if event_table.event_type == event_type:
-                source_records = event_table.records
-                break
-
-        if source_records is None or source_records.empty:
-            source_records = self._build_fallback_event_records(config, event_type, rng)
-
-        sampled_records = source_records.copy()
-        if len(sampled_records) > config.ml_sample_count:
-            sampled_records = sampled_records.sample(config.ml_sample_count, random_state=config.base_seed)
-            sampled_records = sampled_records.reset_index(drop=True)
-
-        training_rows = []
-        for _, row in sampled_records.iterrows():
-            training_row = self._build_event_training_row(config, event_type, row, surfaces, rng)
-            training_rows.append(training_row)
-
-        return pd.DataFrame(training_rows)
-
-    def _build_fallback_event_records(self, config, event_type, rng):
-        records = []
-        years = config.future_years or [config.target_year]
-
-        for _ in range(240):
-            row = int(rng.integers(0, config.grid_rows))
-            col = int(rng.integers(0, config.grid_cols))
-            event_year = int(years[int(rng.integers(0, len(years)))])
-            severity = float(rng.uniform(0.15, 0.75))
-            patch_size = int(rng.integers(config.logging_patch_min_size, config.logging_patch_max_size + 1))
-            record = {
-                "row": row,
-                "col": col,
-                "y_event": event_year,
-                "Severity": severity,
-                "patch_size": patch_size,
-                "type": event_type,
-            }
-            records.append(record)
-
-        return pd.DataFrame(records)
-
-    def _build_event_training_row(self, config, event_type, row, surfaces, rng):
-        grid_row = int(row["row"])
-        grid_col = int(row["col"])
-        agbd_pre = float(surfaces["agbd_pre"][grid_row, grid_col])
-        tcc_pre = float(surfaces["tcc_pre"][grid_row, grid_col])
-        slope = float(surfaces["slope"][grid_row, grid_col])
-        moisture = float(surfaces["moisture"][grid_row, grid_col])
-        accessibility = float(surfaces["accessibility"][grid_row, grid_col])
-        severity = float(row.get("Severity", 0.30))
-        tau = float(max(config.target_year - int(row["y_event"]), 0))
-        gap = float(max(int(row["y_event"]) - config.base_year, 1))
-        patch_size = float(row.get("patch_size", 1))
-
-        target_agbd = self._build_event_target_value(
-            event_type,
-            agbd_pre,
-            tcc_pre,
-            slope,
-            moisture,
-            accessibility,
-            severity,
-            tau,
-            patch_size,
-            rng,
-        )
-
-        record = {
-            "AGBD_pre": agbd_pre,
-            "TCC_pre": tcc_pre,
-            "Severity": severity,
-            "tau": tau,
-            "gap": gap,
-            "patch_size": patch_size,
-            "target_agbd": target_agbd,
-            "sample_weight": float(row.get("sample_weight", row.get("weight_driver", 1.0))),
-        }
-        self._add_env_values_to_record(record, surfaces, grid_row, grid_col)
-        return record
-
     def _add_env_values_to_record(self, record, surfaces, row, col):
         for env_name in surfaces.get("env_feature_names", ["slope", "moisture", "accessibility"]):
             record[env_name] = float(surfaces[env_name][row, col])
         return record
-
-    def _build_event_target_value(
-        self,
-        event_type,
-        agbd_pre,
-        tcc_pre,
-        slope,
-        moisture,
-        accessibility,
-        severity,
-        tau,
-        patch_size,
-        rng,
-    ):
-        if event_type == "logging":
-            loss_part = 18.0 + severity * 42.0 + patch_size * 0.45 + accessibility * 5.0
-            recovery_part = tau * 2.3 + moisture * 12.0 + tcc_pre * 8.0
-            target_agbd = agbd_pre - loss_part + recovery_part - slope * 0.18
-            noise_scale = 2.5
-        elif event_type == "urban_edge":
-            loss_part = 8.0 + severity * 24.0 + accessibility * 6.0
-            recovery_part = tau * 1.7 + moisture * 8.0 + tcc_pre * 6.0
-            target_agbd = agbd_pre - loss_part + recovery_part - slope * 0.10
-            noise_scale = 1.8
-        else:
-            loss_part = 28.0 + severity * 60.0 + accessibility * 10.0 + slope * 0.35
-            recovery_part = tau * 0.6 + moisture * 3.5 + tcc_pre * 2.5
-            target_agbd = agbd_pre - loss_part + recovery_part
-            noise_scale = 2.5
-
-        target_agbd = target_agbd + rng.normal(0.0, noise_scale)
-        return float(max(target_agbd, 0.0))
 
     def _build_event_feature_matrix(self, config, records, surfaces, rng, climate_shift):
         sample_count = len(records)

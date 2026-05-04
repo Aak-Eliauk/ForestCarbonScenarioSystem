@@ -38,17 +38,97 @@ class FullWorkflowTest(unittest.TestCase):
         return output_dir
 
     def build_small_config(self, severity_method="S1"):
+        output_dir = self.get_test_output_dir() / ("workflow_" + severity_method)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return self.build_history_raster_config(output_dir, severity_method)
+
+    def build_history_raster_config(self, output_dir, severity_method="S1"):
+        rows = 20
+        cols = 20
+        agbd_2021 = np.full((rows, cols), 96.0, dtype=np.float32)
+        agbd_2022 = np.full((rows, cols), 102.0, dtype=np.float32)
+        agbd_2022[2:6, 2:6] = 54.0
+        agbd_2022[1:7, 1:7] = np.minimum(agbd_2022[1:7, 1:7], 82.0)
+        agbd_2022[2:6, 2:6] = 54.0
+        agbd_2022[10:14, 10:14] = 48.0
+
+        tcc_2021 = np.full((rows, cols), 0.68, dtype=np.float32)
+        tcc_2022 = np.full((rows, cols), 0.72, dtype=np.float32)
+        tcc_2022[2:6, 2:6] = 0.24
+        tcc_2022[1:7, 1:7] = np.minimum(tcc_2022[1:7, 1:7], 0.48)
+        tcc_2022[2:6, 2:6] = 0.24
+        tcc_2022[10:14, 10:14] = 0.18
+
+        lulc_base = np.full((rows, cols), 1, dtype=np.uint8)
+        lulc_2021 = np.full((rows, cols), 1, dtype=np.uint8)
+        lulc_2022 = np.full((rows, cols), 1, dtype=np.uint8)
+        lulc_2022[2:6, 2:6] = 8
+        lulc_target = lulc_2022.copy()
+
+        drivers = np.zeros((4, rows, cols), dtype=np.uint8)
+        drivers[0, 10:14, 10:14] = 4
+        drivers[1, 10:14, 10:14] = 220
+        drivers[2, 2:6, 2:6] = 200
+        drivers[3, 10:14, 10:14] = 22
+
+        reserve = np.zeros((rows, cols), dtype=np.uint8)
+        slope = np.tile(np.linspace(1, 20, cols, dtype=np.float32), (rows, 1))
+        moisture = np.tile(np.linspace(0.3, 0.9, rows, dtype=np.float32).reshape(rows, 1), (1, cols))
+        road = np.tile(np.linspace(0.2, 0.8, cols, dtype=np.float32), (rows, 1))
+
+        agbd_2021_path = output_dir / "agbd_2021.tif"
+        agbd_2022_path = output_dir / "agbd_2022.tif"
+        tcc_2021_path = output_dir / "tcc_2021.tif"
+        tcc_2022_path = output_dir / "tcc_2022.tif"
+        lulc_base_path = output_dir / "lulc_base.tif"
+        lulc_2021_path = output_dir / "lulc_2021.tif"
+        lulc_2022_path = output_dir / "lulc_2022.tif"
+        lulc_target_path = output_dir / "lulc_target.tif"
+        drivers_path = output_dir / "drivers.tif"
+        reserve_path = output_dir / "reserve.tif"
+        slope_path = output_dir / "slope.tif"
+        moisture_path = output_dir / "moisture.tif"
+        road_path = output_dir / "road.tif"
+
+        self.write_test_raster(agbd_2021_path, agbd_2021, "float32", -9999.0)
+        self.write_test_raster(agbd_2022_path, agbd_2022, "float32", -9999.0)
+        self.write_test_raster(tcc_2021_path, tcc_2021, "float32", -9999.0)
+        self.write_test_raster(tcc_2022_path, tcc_2022, "float32", -9999.0)
+        self.write_test_raster(lulc_base_path, lulc_base, "uint8", 255)
+        self.write_test_raster(lulc_2021_path, lulc_2021, "uint8", 255)
+        self.write_test_raster(lulc_2022_path, lulc_2022, "uint8", 255)
+        self.write_test_raster(lulc_target_path, lulc_target, "uint8", 255)
+        self.write_multiband_test_raster(drivers_path, drivers, "uint8", 255)
+        self.write_test_raster(reserve_path, reserve, "uint8", 255)
+        self.write_test_raster(slope_path, slope, "float32", -9999.0)
+        self.write_test_raster(moisture_path, moisture, "float32", -9999.0)
+        self.write_test_raster(road_path, road, "float32", -9999.0)
+
         return ScenarioConfig(
             scenario_name=f"test_{severity_method}",
-            grid_rows=64,
-            grid_cols=64,
             mc_n_simulations=6,
             ml_sample_count=1200,
             ml_n_estimators=20,
             ml_max_depth=6,
             severity_method=severity_method,
             base_seed=42,
-            use_raster_data=False,
+            use_raster_data=True,
+            use_history_training=True,
+            agbd_raster_path=str(agbd_2022_path),
+            tcc_raster_path=str(tcc_2022_path),
+            lulc_base_raster_path=str(lulc_base_path),
+            lulc_target_raster_path=str(lulc_target_path),
+            drivers_raster_path=str(drivers_path),
+            reserve_raster_path=str(reserve_path),
+            env_raster_paths=f"slope={slope_path}\nmoisture={moisture_path}\naccessibility={road_path}",
+            history_agbd_paths=f"2021={agbd_2021_path}\n2022={agbd_2022_path}",
+            history_tcc_paths=f"2021={tcc_2021_path}\n2022={tcc_2022_path}",
+            history_lulc_paths=f"2021={lulc_2021_path}\n2022={lulc_2022_path}",
+            forest_lulc_codes="1",
+            urban_lulc_codes="8",
+            logging_driver_value=4,
+            reserve_value=1,
+            output_dir=str(output_dir),
         )
 
     def run_complete_flow(self, severity_method):
@@ -102,7 +182,7 @@ class FullWorkflowTest(unittest.TestCase):
             use_raster_data=False,
         )
 
-        with self.assertRaisesRegex(ValueError, "采伐事件生成失败"):
+        with self.assertRaisesRegex(ValueError, "演示网格模式已删除"):
             ScenarioEngine().generate_all_events(config)
 
     def test_zero_reserve_ratio_has_no_reserved_cells(self):
@@ -128,10 +208,10 @@ class FullWorkflowTest(unittest.TestCase):
         config, scenario_engine, events, bundle, report = self.run_complete_flow("S1")
         self.assertEqual(config.severity_method, "S1")
         self.assertEqual(len(events), 3)
-        self.assertEqual(scenario_engine.last_patch_library.summary()["patch_count"], config.logging_library_patch_count)
+        self.assertGreater(scenario_engine.last_patch_library.summary()["patch_count"], 0)
         self.assertGreater(bundle.summary["mean_agbd_per_ha"], 0)
         self.assertGreater(bundle.summary["mean_agc_per_ha"], 0)
-        self.assertEqual(len(bundle.training_summary_df), 4)
+        self.assertGreaterEqual(len(bundle.training_summary_df), 2)
         self.assertFalse(bundle.training_sample_df.empty)
         self.assertFalse(report.total_distribution_df.empty)
 
@@ -166,60 +246,12 @@ class FullWorkflowTest(unittest.TestCase):
     def test_raster_workflow_reads_geotiff_and_writes_outputs(self):
         output_dir = self.get_test_output_dir() / "raster_case"
         output_dir.mkdir(parents=True, exist_ok=True)
-
-        agbd_path = output_dir / "agbd.tif"
-        tcc_path = output_dir / "tcc.tif"
-        lulc_base_path = output_dir / "lulc_base.tif"
-        lulc_target_path = output_dir / "lulc_target.tif"
-        drivers_path = output_dir / "drivers.tif"
-        reserve_path = output_dir / "reserve.tif"
-
-        rows = 20
-        cols = 20
-        agbd = np.full((rows, cols), 95.0, dtype=np.float32)
-        tcc = np.full((rows, cols), 0.55, dtype=np.float32)
-        lulc_base = np.full((rows, cols), 1, dtype=np.uint8)
-        lulc_target = np.full((rows, cols), 1, dtype=np.uint8)
-        lulc_target[3:8, 3:8] = 8
-        drivers = np.zeros((rows, cols), dtype=np.uint8)
-        drivers[10:15, 10:15] = 4
-        reserve = np.zeros((rows, cols), dtype=np.uint8)
-        reserve[0:2, 0:2] = 1
-
-        self.write_test_raster(agbd_path, agbd, "float32", -9999.0)
-        self.write_test_raster(tcc_path, tcc, "float32", -9999.0)
-        self.write_test_raster(lulc_base_path, lulc_base, "uint8", 255)
-        self.write_test_raster(lulc_target_path, lulc_target, "uint8", 255)
-        self.write_test_raster(drivers_path, drivers, "uint8", 255)
-        self.write_test_raster(reserve_path, reserve, "uint8", 255)
-
-        config = ScenarioConfig(
-            scenario_name="raster_test",
-            base_year=2022,
-            target_year=2025,
-            mc_n_simulations=2,
-            ml_sample_count=120,
-            ml_n_estimators=10,
-            ml_max_depth=4,
-            logging_patch_min_size=1,
-            logging_patch_max_size=8,
-            logging_library_patch_count=20,
-            use_raster_data=True,
-            use_history_training=False,
-            agbd_raster_path=str(agbd_path),
-            tcc_raster_path=str(tcc_path),
-            lulc_base_raster_path=str(lulc_base_path),
-            lulc_target_raster_path=str(lulc_target_path),
-            drivers_raster_path=str(drivers_path),
-            reserve_raster_path=str(reserve_path),
-            env_raster_paths="",
-            forest_lulc_codes="1",
-            urban_lulc_codes="8",
-            logging_driver_value=4,
-            reserve_value=1,
-            pixel_area_ha=1.0,
-            output_dir=str(output_dir),
-        )
+        config = self.build_history_raster_config(output_dir, "S1")
+        config.scenario_name = "raster_test"
+        config.mc_n_simulations = 2
+        config.ml_sample_count = 120
+        config.ml_n_estimators = 10
+        config.ml_max_depth = 4
 
         scenario_engine = ScenarioEngine()
         events = scenario_engine.generate_all_events(config)
@@ -253,10 +285,16 @@ class FullWorkflowTest(unittest.TestCase):
         lulc_2022 = np.full((rows, cols), 1, dtype=np.uint8)
         lulc_2022[3:6, 3:6] = 8
 
-        drivers = np.zeros((3, rows, cols), dtype=np.uint8)
+        drivers = np.zeros((4, rows, cols), dtype=np.uint8)
         drivers[0, 8:11, 8:11] = 4
         drivers[1, 8:11, 8:11] = 220
         drivers[2, 3:6, 3:6] = 200
+        drivers[3, 8:11, 8:11] = 22
+
+        slope = np.tile(np.linspace(1, 14, cols, dtype=np.float32), (rows, 1))
+        moisture = np.tile(np.linspace(0.2, 0.9, rows, dtype=np.float32).reshape(rows, 1), (1, cols))
+        road = np.tile(np.linspace(0.1, 0.8, cols, dtype=np.float32), (rows, 1))
+        reserve = np.zeros((rows, cols), dtype=np.uint8)
 
         agbd_2020_path = output_dir / "agbd_2020.tif"
         agbd_2022_path = output_dir / "agbd_2022.tif"
@@ -265,6 +303,10 @@ class FullWorkflowTest(unittest.TestCase):
         lulc_2020_path = output_dir / "lulc_2020.tif"
         lulc_2022_path = output_dir / "lulc_2022.tif"
         drivers_path = output_dir / "drivers_multiband.tif"
+        slope_path = output_dir / "slope.tif"
+        moisture_path = output_dir / "moisture.tif"
+        road_path = output_dir / "road.tif"
+        reserve_path = output_dir / "reserve.tif"
 
         self.write_test_raster(agbd_2020_path, agbd_2020, "float32", -9999.0)
         self.write_test_raster(agbd_2022_path, agbd_2022, "float32", -9999.0)
@@ -273,6 +315,10 @@ class FullWorkflowTest(unittest.TestCase):
         self.write_test_raster(lulc_2020_path, lulc_2020, "uint8", 255)
         self.write_test_raster(lulc_2022_path, lulc_2022, "uint8", 255)
         self.write_multiband_test_raster(drivers_path, drivers, "uint8", 255)
+        self.write_test_raster(slope_path, slope, "float32", -9999.0)
+        self.write_test_raster(moisture_path, moisture, "float32", -9999.0)
+        self.write_test_raster(road_path, road, "float32", -9999.0)
+        self.write_test_raster(reserve_path, reserve, "uint8", 255)
 
         config = ScenarioConfig(
             scenario_name="history_training",
@@ -293,8 +339,8 @@ class FullWorkflowTest(unittest.TestCase):
             lulc_base_raster_path=str(lulc_2022_path),
             lulc_target_raster_path=str(lulc_2022_path),
             drivers_raster_path=str(drivers_path),
-            reserve_raster_path="",
-            env_raster_paths="",
+            reserve_raster_path=str(reserve_path),
+            env_raster_paths=f"slope={slope_path}\nmoisture={moisture_path}\naccessibility={road_path}",
             history_agbd_paths=f"2021={agbd_2020_path}\n2022={agbd_2022_path}",
             history_tcc_paths=f"2021={tcc_2020_path}\n2022={tcc_2022_path}",
             history_lulc_paths=f"2021={lulc_2020_path}\n2022={lulc_2022_path}",
@@ -321,11 +367,15 @@ class FullWorkflowTest(unittest.TestCase):
         tcc_path = output_dir / "tcc.tif"
         lulc_base_path = output_dir / "lulc_base.tif"
         lulc_target_path = output_dir / "lulc_target.tif"
+        drivers_path = output_dir / "drivers.tif"
+        reserve_path = output_dir / "reserve.tif"
 
         self.write_test_raster(agbd_path, np.ones((20, 20), dtype=np.float32), "float32", -9999.0)
         self.write_test_raster(tcc_path, np.ones((20, 20), dtype=np.float32), "float32", -9999.0)
         self.write_test_raster(lulc_base_path, np.ones((20, 20), dtype=np.uint8), "uint8", 255)
         self.write_test_raster(lulc_target_path, np.ones((21, 20), dtype=np.uint8), "uint8", 255)
+        self.write_test_raster(drivers_path, np.zeros((20, 20), dtype=np.uint8), "uint8", 255)
+        self.write_test_raster(reserve_path, np.zeros((20, 20), dtype=np.uint8), "uint8", 255)
 
         config = ScenarioConfig(
             use_raster_data=True,
@@ -334,6 +384,8 @@ class FullWorkflowTest(unittest.TestCase):
             tcc_raster_path=str(tcc_path),
             lulc_base_raster_path=str(lulc_base_path),
             lulc_target_raster_path=str(lulc_target_path),
+            drivers_raster_path=str(drivers_path),
+            reserve_raster_path=str(reserve_path),
             env_raster_paths="",
         )
 

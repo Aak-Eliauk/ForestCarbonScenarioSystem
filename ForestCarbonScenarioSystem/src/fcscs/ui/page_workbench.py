@@ -180,6 +180,9 @@ def _render_data_step(current):
         lulc_target_raster_path,
         drivers_raster_path,
         reserve_raster_path,
+        terrain_path,
+        climate_path,
+        human_path,
         history_agbd_paths,
         history_tcc_paths,
         history_lulc_paths,
@@ -216,6 +219,9 @@ def _render_data_step(current):
                 lulc_target_raster_path,
                 drivers_raster_path,
                 reserve_raster_path,
+                terrain_path,
+                climate_path,
+                human_path,
                 history_agbd_paths,
                 history_tcc_paths,
                 history_lulc_paths,
@@ -344,7 +350,7 @@ def _render_scenario_step(current):
         with c_sev:
             severity_sample_count = st.number_input("经验强度样本数", min_value=100, max_value=200000, value=current.severity_sample_count, step=100, key="wizard_sev_sample_count")
         with c_note:
-            st.caption("启用历史训练后，系统会从历史 TCC 变化中抽取扰动强度经验分布；未提供历史数据时自动使用简化随机分布。")
+            st.caption("历史训练数据为必填，系统会按树冠覆盖度、地形、气候水分和人为活动因子分层抽取扰动强度。")
 
     c_back, c_save = st.columns([1, 2])
     with c_back:
@@ -693,19 +699,20 @@ def _render_required_path_status(missing_items):
 def _raster_path_input(label, current_value, project_rasters, key, compact=False):
     select_key = key + "_path_combo"
     pending_key = key + "_pending_path"
+    pending_value = ""
 
     if pending_key in st.session_state:
-        st.session_state[select_key] = st.session_state[pending_key]
+        pending_value = str(st.session_state[pending_key]).strip()
         del st.session_state[pending_key]
+        if select_key in st.session_state:
+            del st.session_state[select_key]
 
     session_value = st.session_state.get(select_key, "")
-    options = _build_path_options(current_value, project_rasters, session_value)
-    if select_key not in st.session_state:
-        st.session_state[select_key] = _initial_path_value(current_value, options)
+    default_value = pending_value or session_value or current_value
+    options = _build_path_options(default_value, project_rasters, session_value)
 
-    selected_value = st.session_state.get(select_key, "")
     if compact:
-        selected_value = _render_path_combo(label, options, select_key)
+        selected_value = _render_path_combo(label, options, select_key, default_value)
         if st.button("浏览...", key=key + "_browse"):
             picked_path = _open_windows_file_dialog(label)
             if picked_path:
@@ -716,7 +723,7 @@ def _raster_path_input(label, current_value, project_rasters, key, compact=False
         with label_col:
             st.markdown(f"**{label}**")
         with path_col:
-            selected_value = _render_path_combo("路径", options, select_key)
+            selected_value = _render_path_combo("路径", options, select_key, default_value)
         with button_col:
             if st.button("浏览", key=key + "_browse", use_container_width=True):
                 picked_path = _open_windows_file_dialog(label)
@@ -727,11 +734,21 @@ def _raster_path_input(label, current_value, project_rasters, key, compact=False
     return str(selected_value).strip()
 
 
-def _render_path_combo(label, options, select_key):
+def _render_path_combo(label, options, select_key, default_value):
+    if select_key in st.session_state:
+        return st.selectbox(
+            label,
+            options,
+            key=select_key,
+            label_visibility="collapsed",
+            accept_new_options=True,
+            format_func=_format_path_option,
+        )
+
     return st.selectbox(
         label,
         options,
-        index=_find_option_index(options, st.session_state.get(select_key, "")),
+        index=_find_option_index(options, default_value),
         key=select_key,
         label_visibility="collapsed",
         accept_new_options=True,
@@ -950,23 +967,32 @@ def _render_extra_env_factor_row(row, project_rasters, index):
     path_key = f"wizard_extra_env_path_{index}"
     select_key = path_key + "_path_combo"
     pending_key = path_key + "_pending_path"
+    clear_key = f"wizard_extra_env_clear_{index}"
+    pending_value = ""
 
+    if clear_key in st.session_state:
+        if name_key in st.session_state:
+            del st.session_state[name_key]
+        if select_key in st.session_state:
+            del st.session_state[select_key]
+        del st.session_state[clear_key]
+        row = {"name": "", "path": ""}
     if pending_key in st.session_state:
-        st.session_state[select_key] = st.session_state[pending_key]
+        pending_value = str(st.session_state[pending_key]).strip()
         del st.session_state[pending_key]
-    if name_key not in st.session_state:
-        st.session_state[name_key] = row.get("name", "")
-    options = _build_path_options(row.get("path", ""), project_rasters, st.session_state.get(select_key, ""))
-    if select_key not in st.session_state:
-        st.session_state[select_key] = _initial_path_value(row.get("path", ""), options)
+        if select_key in st.session_state:
+            del st.session_state[select_key]
+
+    session_value = st.session_state.get(select_key, "")
+    default_value = pending_value or session_value or row.get("path", "")
+    options = _build_path_options(default_value, project_rasters, session_value)
 
     label_col, name_col, path_col, browse_col, delete_col = st.columns([1.2, 1.8, 5.2, 0.8, 0.8])
     with label_col:
         st.markdown("**扩展因子**")
     with delete_col:
         if st.button("删除", key=f"wizard_extra_env_delete_{index}", use_container_width=True):
-            st.session_state[name_key] = ""
-            st.session_state[select_key] = ""
+            st.session_state[clear_key] = True
             st.rerun()
     with browse_col:
         if st.button("浏览", key=f"wizard_extra_env_browse_{index}", use_container_width=True):
@@ -975,9 +1001,9 @@ def _render_extra_env_factor_row(row, project_rasters, index):
                 st.session_state[pending_key] = picked_path
                 st.rerun()
     with name_col:
-        name_value = st.text_input("因子名称", key=name_key, label_visibility="collapsed", placeholder="如土壤、夜光")
+        name_value = st.text_input("因子名称", value=row.get("name", ""), key=name_key, label_visibility="collapsed", placeholder="如土壤、夜光")
     with path_col:
-        path_value = _render_path_combo("路径", options, select_key)
+        path_value = _render_path_combo("路径", options, select_key, default_value)
 
     return name_value, path_value
 
@@ -1009,23 +1035,24 @@ def _render_year_raster_row(row, project_rasters, key_prefix, index):
     path_key = f"{key_prefix}_path_{index}"
     select_key = path_key + "_path_combo"
     pending_key = path_key + "_pending_path"
+    pending_value = ""
 
     if pending_key in st.session_state:
-        st.session_state[select_key] = st.session_state[pending_key]
+        pending_value = str(st.session_state[pending_key]).strip()
         del st.session_state[pending_key]
-    if year_key not in st.session_state:
-        st.session_state[year_key] = str(row.get("year", ""))
-    options = _build_path_options(row.get("path", ""), project_rasters, st.session_state.get(select_key, ""))
-    if select_key not in st.session_state:
-        st.session_state[select_key] = _initial_path_value(row.get("path", ""), options)
+        if select_key in st.session_state:
+            del st.session_state[select_key]
+    session_value = st.session_state.get(select_key, "")
+    default_value = pending_value or session_value or row.get("path", "")
+    options = _build_path_options(default_value, project_rasters, session_value)
 
     row_label_col, year_col, path_col, browse_col = st.columns([1.2, 0.85, 6.1, 0.85])
     with row_label_col:
         st.caption("年份数据")
     with year_col:
-        year_value = st.text_input("年份", key=year_key, label_visibility="collapsed", placeholder="2020")
+        year_value = st.text_input("年份", value=str(row.get("year", "")), key=year_key, label_visibility="collapsed", placeholder="2020")
     with path_col:
-        path_value = _render_path_combo("路径", options, select_key)
+        path_value = _render_path_combo("路径", options, select_key, default_value)
     with browse_col:
         if st.button("浏览", key=f"{path_key}_browse", use_container_width=True):
             picked_path = _open_windows_file_dialog("历史栅格")
@@ -1119,6 +1146,9 @@ def _find_data_missing(
     lulc_target_path,
     drivers_path,
     reserve_path,
+    terrain_path,
+    climate_path,
+    human_path,
     history_agbd_paths,
     history_tcc_paths,
     history_lulc_paths,
@@ -1130,6 +1160,9 @@ def _find_data_missing(
         ("目标年预测土地利用栅格", lulc_target_path),
         ("森林损失驱动因素栅格", drivers_path),
         ("自然保护区栅格", reserve_path),
+        ("地形因子栅格", terrain_path),
+        ("气候水分因子栅格", climate_path),
+        ("人为活动因子栅格", human_path),
     ]
     missing = []
     for name, path_text in items:
@@ -1247,6 +1280,9 @@ def _data_ready(config):
         config.lulc_target_raster_path,
         config.drivers_raster_path,
         config.reserve_raster_path,
+        _get_env_path_by_role(config.env_raster_paths, "terrain"),
+        _get_env_path_by_role(config.env_raster_paths, "climate"),
+        _get_env_path_by_role(config.env_raster_paths, "human"),
         config.history_agbd_paths,
         config.history_tcc_paths,
         config.history_lulc_paths,

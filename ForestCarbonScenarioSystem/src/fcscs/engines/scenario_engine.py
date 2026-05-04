@@ -22,27 +22,9 @@ class ScenarioEngine:
 
     def generate_all_events(self, config):
         self._check_config(config)
-        if config.use_raster_data:
-            return self._generate_all_events_from_rasters(config)
-
-        rng = np.random.default_rng(config.base_seed)
-        reserve_mask = self._build_reserve_mask(config)
-
-        logging_events = self._generate_logging_events(config, rng, reserve_mask)
-        logging_pixels = self._build_pixel_id_set(logging_events.records)
-
-        urban_conv_events = self._generate_urban_conv_events(config, rng, reserve_mask, logging_pixels)
-        conv_pixels = self._build_pixel_id_set(urban_conv_events.records)
-
-        urban_edge_events = self._generate_urban_edge_events(
-            config,
-            urban_conv_events.records,
-            reserve_mask,
-            logging_pixels,
-            conv_pixels,
-        )
-
-        return [logging_events, urban_conv_events, urban_edge_events]
+        if not config.use_raster_data:
+            raise ValueError("演示网格模式已删除，请使用真实栅格数据运行系统。")
+        return self._generate_all_events_from_rasters(config)
 
     def _generate_all_events_from_rasters(self, config):
         self._check_raster_config(config)
@@ -96,12 +78,10 @@ class ScenarioEngine:
             ("TCC", config.tcc_raster_path),
             ("基准年LULC", config.lulc_base_raster_path),
             ("目标年LULC", config.lulc_target_raster_path),
+            ("Drivers", config.drivers_raster_path),
+            ("保护区", config.reserve_raster_path),
         ]
         optional_items = []
-        if path_exists(config.drivers_raster_path):
-            optional_items.append(("Drivers", config.drivers_raster_path))
-        if path_exists(config.reserve_raster_path):
-            optional_items.append(("保护区", config.reserve_raster_path))
         for name, path_text in parse_env_raster_paths(config.env_raster_paths):
             if path_exists(path_text):
                 optional_items.append(("环境因子-" + name, path_text))
@@ -237,82 +217,6 @@ class ScenarioEngine:
     def _empty_event_frame(self):
         return pd.DataFrame(columns=["pixel_id", "row", "col", "type", "y_event"])
 
-    def _generate_logging_events(self, config, rng, reserve_mask):
-        base_count = 2200
-        target_count = self._calculate_event_count(base_count, config.logging_area_reduction)
-
-        patch_library = LoggingPatchLibrary()
-        patch_library.build_library(config, rng)
-        self.last_patch_library = patch_library
-
-        records = patch_library.sample_future_events(config, rng, reserve_mask, target_count)
-        return EventTable("logging", records)
-
-    def _generate_urban_conv_events(self, config, rng, reserve_mask, logging_pixels):
-        base_count = 1800
-        target_count = self._calculate_event_count(base_count, config.urban_area_reduction)
-        years = self._pick_years(config.future_years, target_count, config.urban_speed_shift, rng)
-        centers = self._build_urban_centers(config, rng, reserve_mask)
-        used_pixels = set(logging_pixels)
-        records = []
-
-        for event_year in years:
-            cell = self._pick_urban_cell(config, rng, reserve_mask, centers, used_pixels)
-            if cell is None:
-                break
-
-            row, col = cell
-            record = self._create_basic_record(config, row, col, "urban_conv", event_year)
-            records.append(record)
-            used_pixels.add(record["pixel_id"])
-
-        return EventTable("urban_conv", pd.DataFrame(records))
-
-    def _generate_urban_edge_events(self, config, conv_df, reserve_mask, logging_pixels, conv_pixels):
-        edge_year_map = {}
-        edge_position_map = {}
-        block_pixels = set(logging_pixels)
-        for pixel_id in conv_pixels:
-            block_pixels.add(pixel_id)
-
-        for _, row in conv_df.iterrows():
-            conv_row = int(row["row"])
-            conv_col = int(row["col"])
-            conv_year = int(row["y_event"])
-            neighbors = self._get_neighbor_cells(conv_row, conv_col, config.grid_rows, config.grid_cols)
-
-            for neighbor_row, neighbor_col in neighbors:
-                if reserve_mask[neighbor_row, neighbor_col]:
-                    continue
-
-                pixel_id = self._build_pixel_id(config, neighbor_row, neighbor_col)
-                if pixel_id in block_pixels:
-                    continue
-
-                if pixel_id not in edge_year_map:
-                    edge_year_map[pixel_id] = conv_year
-                    edge_position_map[pixel_id] = (neighbor_row, neighbor_col)
-                else:
-                    old_year = edge_year_map[pixel_id]
-                    if conv_year < old_year:
-                        edge_year_map[pixel_id] = conv_year
-                        edge_position_map[pixel_id] = (neighbor_row, neighbor_col)
-
-        records = []
-        for pixel_id in sorted(edge_year_map.keys()):
-            row, col = edge_position_map[pixel_id]
-            event_year = edge_year_map[pixel_id]
-            record = {
-                "pixel_id": pixel_id,
-                "row": row,
-                "col": col,
-                "type": "urban_edge",
-                "y_event": event_year,
-            }
-            records.append(record)
-
-        return EventTable("urban_edge", pd.DataFrame(records))
-
     def _build_reserve_mask(self, config):
         mask = np.zeros((config.grid_rows, config.grid_cols), dtype=bool)
         reserve_ratio = config.reserve_ratio
@@ -354,81 +258,6 @@ class ScenarioEngine:
 
         return mask
 
-    def _calculate_event_count(self, base_count, reduction):
-        count = int(base_count * (1 - reduction))
-        if count < 0:
-            count = 0
-        return count
-
-    def _build_urban_centers(self, config, rng, reserve_mask):
-        centers = []
-        center_count = config.urban_center_count
-        if center_count < 1:
-            center_count = 1
-
-        index = 0
-        while index < center_count:
-            cell = self._pick_random_allowed_cell(config, rng, reserve_mask, set())
-            if cell is not None:
-                centers.append(cell)
-            index += 1
-
-        if not centers:
-            center_row = config.grid_rows // 2
-            center_col = config.grid_cols // 2
-            centers.append((center_row, center_col))
-
-        return centers
-
-    def _pick_urban_cell(self, config, rng, reserve_mask, centers, used_pixels):
-        spread = min(config.grid_rows, config.grid_cols) // 10
-        if spread < 4:
-            spread = 4
-
-        try_count = 0
-        while try_count < 80:
-            center_index = int(rng.integers(0, len(centers)))
-            center_row, center_col = centers[center_index]
-            row = int(round(rng.normal(center_row, spread)))
-            col = int(round(rng.normal(center_col, spread)))
-
-            if row < 0 or row >= config.grid_rows:
-                try_count += 1
-                continue
-            if col < 0 or col >= config.grid_cols:
-                try_count += 1
-                continue
-            if reserve_mask[row, col]:
-                try_count += 1
-                continue
-
-            pixel_id = self._build_pixel_id(config, row, col)
-            if pixel_id in used_pixels:
-                try_count += 1
-                continue
-
-            return row, col
-
-        return self._pick_random_allowed_cell(config, rng, reserve_mask, used_pixels)
-
-    def _pick_random_allowed_cell(self, config, rng, reserve_mask, used_pixels):
-        try_count = 0
-        while try_count < 300:
-            row = int(rng.integers(0, config.grid_rows))
-            col = int(rng.integers(0, config.grid_cols))
-            if reserve_mask[row, col]:
-                try_count += 1
-                continue
-
-            pixel_id = self._build_pixel_id(config, row, col)
-            if pixel_id in used_pixels:
-                try_count += 1
-                continue
-
-            return row, col
-
-        return None
-
     def _build_pixel_id_set(self, records):
         pixel_ids = set()
         if records.empty:
@@ -437,16 +266,6 @@ class ScenarioEngine:
         for pixel_id in records["pixel_id"].tolist():
             pixel_ids.add(int(pixel_id))
         return pixel_ids
-
-    def _create_basic_record(self, config, row, col, event_type, year):
-        pixel_id = self._build_pixel_id(config, row, col)
-        return {
-            "pixel_id": pixel_id,
-            "row": row,
-            "col": col,
-            "type": event_type,
-            "y_event": int(year),
-        }
 
     def _build_pixel_id(self, config, row, col):
         return row * config.grid_cols + col
@@ -549,71 +368,6 @@ class LoggingPatch:
 class LoggingPatchLibrary:
     def __init__(self):
         self.patches = []
-
-    def build_library(self, config, rng):
-        self.patches = []
-        patch_total = max(1, config.logging_library_patch_count)
-        history_years = self._build_history_years(config)
-
-        patch_id = 1
-        while patch_id <= patch_total:
-            source_year = self._pick_source_year(history_years, rng)
-            patch_size = self._pick_patch_size(config, rng)
-            row_offsets, col_offsets = self._build_patch_offsets(patch_size, rng)
-            patch = LoggingPatch(patch_id, source_year, row_offsets, col_offsets)
-            self.patches.append(patch)
-            patch_id += 1
-
-        return self
-
-    def _build_history_years(self, config):
-        years = []
-        year = config.base_year - config.logging_library_years + 1
-        while year <= config.base_year:
-            years.append(year)
-            year += 1
-        return years
-
-    def _pick_source_year(self, history_years, rng):
-        index = int(rng.integers(0, len(history_years)))
-        return int(history_years[index])
-
-    def _pick_patch_size(self, config, rng):
-        min_size = max(1, config.logging_patch_min_size)
-        max_size = max(min_size, config.logging_patch_max_size)
-        return int(rng.integers(min_size, max_size + 1))
-
-    def _build_patch_offsets(self, patch_size, rng):
-        cells = []
-        cells.append((0, 0))
-
-        while len(cells) < patch_size:
-            base_index = int(rng.integers(0, len(cells)))
-            base_row, base_col = cells[base_index]
-            row_shift = int(rng.integers(-1, 2))
-            col_shift = int(rng.integers(-1, 2))
-            next_row = base_row + row_shift
-            next_col = base_col + col_shift
-
-            if next_row == base_row and next_col == base_col:
-                continue
-
-            exists = False
-            for old_row, old_col in cells:
-                if old_row == next_row and old_col == next_col:
-                    exists = True
-                    break
-
-            if not exists:
-                cells.append((next_row, next_col))
-
-        cells = sorted(cells)
-        row_offsets = []
-        col_offsets = []
-        for row_offset, col_offset in cells:
-            row_offsets.append(int(row_offset))
-            col_offsets.append(int(col_offset))
-        return row_offsets, col_offsets
 
     def sample_future_events(self, config, rng, reserve_mask, target_count):
         records = []
@@ -801,7 +555,6 @@ class RasterLoggingPatchLibrary(LoggingPatchLibrary):
         components = self._find_patch_components(potential_mask, config)
 
         if not components:
-            self.build_library(config, rng)
             return self
 
         if len(components) > config.logging_library_patch_count:
@@ -828,9 +581,6 @@ class RasterLoggingPatchLibrary(LoggingPatchLibrary):
             patch = LoggingPatch(patch_id, source_year, row_offsets, col_offsets)
             self.patches.append(patch)
             patch_id = patch_id + 1
-
-        if not self.patches:
-            self.build_library(config, rng)
 
         return self
 
@@ -912,27 +662,33 @@ class SeverityEngine:
             values = self._sample_empirical_severity(records, event_type, config)
             if values is not None:
                 return values
-        return self._build_default_severity(records, event_type, config)
+            raise ValueError("历史扰动强度样本为空：请检查历史TCC、Drivers、历史土地利用和环境因子栅格。")
+        raise ValueError("简化随机扰动强度已删除，请使用历史数据计算经验强度分布。")
 
     def _sample_empirical_severity(self, records, event_type, config):
         distribution = self._build_empirical_distribution(event_type, config)
-        if distribution is None or len(distribution) == 0:
+        if distribution is None or distribution.empty:
             return None
 
         rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type))
-        picked = rng.choice(distribution, size=len(records), replace=True)
+        future_features = self._build_future_severity_features(records, config)
+        picked = self._sample_by_strata(distribution, future_features, rng)
         if event_type in {"urban_conv", "urban_conversion"}:
             picked = np.maximum(picked, 0.62)
         if event_type == "urban_edge":
             picked = picked * (1.0 - float(config.urban_severity_reduction))
         if event_type == "logging":
             picked = picked * (1.0 - float(config.logging_severity_reduction))
+            cap_quantile = getattr(config, "logging_severity_cap_quantile", None)
+            if cap_quantile is not None:
+                cap_value = float(np.quantile(distribution["Severity"].to_numpy(dtype=np.float32), float(cap_quantile)))
+                picked = np.minimum(picked, cap_value)
         return np.clip(picked, 0.0, 0.95)
 
     def _build_empirical_distribution(self, event_type, config):
         tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
         lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
-        years = sorted(tcc_paths.keys())
+        years = sorted(set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(years) < 2:
             return None
 
@@ -943,15 +699,22 @@ class SeverityEngine:
         max_samples = max(200, int(getattr(config, "severity_sample_count", 4000)))
 
         drivers_class = None
+        drivers_loss_year = None
         if event_type == "logging" and path_exists(getattr(config, "drivers_raster_path", "")):
             try:
                 drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
+                drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
             except Exception:
                 drivers_class = None
+                drivers_loss_year = None
+
+        env_surfaces = None
 
         for index in range(len(years) - 1):
             start_year = years[index]
             end_year = years[index + 1]
+            if int(end_year) - int(start_year) != 1:
+                continue
             if not path_exists(tcc_paths[start_year]) or not path_exists(tcc_paths[end_year]):
                 continue
             tcc_start, _ = read_raster(tcc_paths[start_year], make_float=True)
@@ -959,11 +722,16 @@ class SeverityEngine:
             tcc_start = self._normalize_tcc(tcc_start)
             tcc_end = self._normalize_tcc(tcc_end)
             mask = np.isfinite(tcc_start) & np.isfinite(tcc_end)
+            if env_surfaces is None:
+                env_surfaces = self._load_severity_env_surfaces(config, tcc_start.shape)
 
             if event_type == "logging":
                 if drivers_class is None or drivers_class.shape != tcc_start.shape:
                     continue
                 mask = mask & (drivers_class == int(config.logging_driver_value))
+                if drivers_loss_year is not None and drivers_loss_year.shape == tcc_start.shape:
+                    encoded_year = drivers_loss_year.astype(np.int32) + 2000
+                    mask = mask & (encoded_year == int(end_year))
             else:
                 if start_year not in lulc_paths or end_year not in lulc_paths:
                     continue
@@ -991,13 +759,99 @@ class SeverityEngine:
                 row = int(row_ids[picked_index])
                 col = int(col_ids[picked_index])
                 severity = self._calculate_severity_value(tcc_start[row, col], tcc_end[row, col])
-                samples.append(severity)
+                if severity <= 0:
+                    continue
+                item = {
+                    "Severity": severity,
+                    "TCC_pre": float(tcc_start[row, col]),
+                }
+                self._add_env_value_to_severity_item(item, env_surfaces, row, col)
+                samples.append(item)
             if len(samples) >= max_samples:
                 break
 
         if not samples:
             return None
-        return np.array(samples, dtype=np.float32)
+        return pd.DataFrame(samples)
+
+    def _load_severity_env_surfaces(self, config, shape):
+        env_items = parse_env_raster_paths(getattr(config, "env_raster_paths", ""))
+        env_map = {}
+        for name, path_text in env_items:
+            if not path_exists(path_text):
+                continue
+            data, _ = read_raster(path_text, make_float=True)
+            if data.shape != shape:
+                continue
+            env_map[name] = self._normalize_env_surface(data)
+
+        result = {}
+        result["slope"] = self._find_env_surface(env_map, ["slope", "坡度", "terrain"])
+        result["moisture"] = self._find_env_surface(env_map, ["moisture", "MAP", "AET", "降水", "水分"])
+        result["accessibility"] = self._find_env_surface(env_map, ["accessibility", "Dist", "Road", "道路", "人为"])
+        return result
+
+    def _find_env_surface(self, env_map, names):
+        for key in env_map:
+            text = str(key).lower()
+            for name in names:
+                if str(name).lower() in text:
+                    return env_map[key]
+        raise ValueError("环境因子栅格不完整：地形因子、气候水分因子和人为活动因子均为必填。")
+
+    def _normalize_env_surface(self, surface):
+        data = surface.astype(np.float32).copy()
+        low = float(np.nanpercentile(data, 2))
+        high = float(np.nanpercentile(data, 98))
+        if high <= low:
+            high = low + 1.0
+        data = (data - low) / (high - low)
+        return np.clip(data, 0.0, 1.0)
+
+    def _add_env_value_to_severity_item(self, item, env_surfaces, row, col):
+        for name in ["slope", "moisture", "accessibility"]:
+            item[name] = float(env_surfaces[name][row, col])
+
+    def _build_future_severity_features(self, records, config):
+        tcc, _ = read_raster(config.tcc_raster_path, make_float=True)
+        tcc = self._normalize_tcc(tcc)
+        env_surfaces = self._load_severity_env_surfaces(config, tcc.shape)
+        rows = records["row"].to_numpy(dtype=int)
+        cols = records["col"].to_numpy(dtype=int)
+        items = []
+        for index in range(len(records)):
+            row = int(rows[index])
+            col = int(cols[index])
+            item = {"TCC_pre": float(tcc[row, col])}
+            self._add_env_value_to_severity_item(item, env_surfaces, row, col)
+            items.append(item)
+        return pd.DataFrame(items)
+
+    def _sample_by_strata(self, distribution, future_features, rng):
+        strat_cols = ["TCC_pre", "slope", "moisture", "accessibility"]
+        edges = {}
+        dist = distribution.copy()
+        future = future_features.copy()
+        for col in strat_cols:
+            col_edges = np.nanquantile(dist[col].to_numpy(dtype=np.float32), np.linspace(0, 1, 5))
+            col_edges = np.unique(col_edges)
+            edges[col] = col_edges
+            dist[col + "_bin"] = np.digitize(dist[col].to_numpy(dtype=np.float32), col_edges[1:-1])
+            future[col + "_bin"] = np.digitize(future[col].to_numpy(dtype=np.float32), col_edges[1:-1])
+
+        result = []
+        for index in range(len(future)):
+            mask = np.ones(len(dist), dtype=bool)
+            for col in strat_cols:
+                mask = mask & (dist[col + "_bin"].to_numpy(dtype=int) == int(future.iloc[index][col + "_bin"]))
+            pool = dist.loc[mask, "Severity"].to_numpy(dtype=np.float32)
+            if len(pool) == 0:
+                tcc_mask = dist["TCC_pre_bin"].to_numpy(dtype=int) == int(future.iloc[index]["TCC_pre_bin"])
+                pool = dist.loc[tcc_mask, "Severity"].to_numpy(dtype=np.float32)
+            if len(pool) == 0:
+                pool = dist["Severity"].to_numpy(dtype=np.float32)
+            result.append(float(rng.choice(pool)))
+        return np.asarray(result, dtype=np.float32)
 
     def _normalize_tcc(self, surface):
         result = surface.astype(np.float32).copy()
