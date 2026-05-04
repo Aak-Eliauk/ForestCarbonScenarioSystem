@@ -20,13 +20,25 @@ OUTPUT_FILE_NAMES = {
     "q95_AGBD_tif": "AGBD 95% 分位栅格",
 }
 
+OVERVIEW_METRIC_LABELS = {
+    "mean_agbd_per_ha": "平均 AGBD",
+    "mean_agc_per_ha": "平均 AGC",
+    "total_agbd_mean": "总 AGBD",
+    "total_agc_mean": "总 AGC",
+    "mean_reduction_per_ha": "平均损失强度",
+    "mean_model_r2": "模型 R2",
+    "mean_model_mae": "模型 MAE",
+}
+
+CHINESE_OVERVIEW_KEYS = ["平均AGBD", "平均AGC", "总AGBD", "总AGC", "平均损失强度", "模型R2", "模型MAE"]
+
 
 def render_result_overview(report, bundle=None):
     metrics = _build_metric_items(report, bundle)
     if metrics:
         columns = st.columns(min(4, len(metrics)))
         for index, (label, value) in enumerate(metrics):
-            columns[index % len(columns)].metric(label, value)
+            columns[index % len(columns)].metric(label, _format_overview_value(value))
 
     if report.summary_df is not None and not report.summary_df.empty:
         st.subheader("结果摘要")
@@ -113,7 +125,7 @@ def _render_uncertainty_cards(distribution_df):
     ]
     if total_agbd is not None:
         cards.append(("AGBD", "总 AGBD 均值", _format_number(total_agbd.mean(), 2)))
-        cards.append(("P05-P95", "总 AGBD 区间", _format_range(total_agbd)))
+        cards.append(("P5-95", "总 AGBD 5%-95%区间", _format_range(total_agbd)))
     if total_agc is not None:
         cards.append(("AGC", "总 AGC 均值", _format_number(total_agc.mean(), 2)))
     elif mean_agbd is not None:
@@ -199,9 +211,28 @@ def _build_metric_items(report, bundle):
         return []
 
     items = []
-    for key, value in report.metrics.items():
-        items.append((key, value))
+    for key in CHINESE_OVERVIEW_KEYS:
+        if key in report.metrics:
+            items.append((key, report.metrics[key]))
+    if items:
+        return items
+
+    for key, label in OVERVIEW_METRIC_LABELS.items():
+        if key in report.metrics:
+            items.append((label, report.metrics[key]))
     return items
+
+
+def _format_overview_value(value):
+    if value is None:
+        return "无数据"
+    try:
+        number = float(value)
+    except Exception:
+        return str(value)
+    if pd.isna(number):
+        return "无数据"
+    return f"{number:,.2f}"
 
 
 def _render_distribution_summary(distribution_df):

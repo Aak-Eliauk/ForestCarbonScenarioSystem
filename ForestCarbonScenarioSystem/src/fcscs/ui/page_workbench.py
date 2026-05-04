@@ -1,17 +1,15 @@
+import re
 from datetime import datetime
 from pathlib import Path
-import time
-import traceback
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 from fcscs.config.defaults import ScenarioConfig, build_default_batch_name, build_preset_config, list_preset_names, sanitize_scenario_name
-from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists
-from fcscs.services.quick_run_service import build_quick_config
-from fcscs.services.workflow_service import run_simulation_workflow
+from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists, resolve_input_path
+from fcscs.services.background_run_service import find_recent_jobs, read_status, start_background_run, terminate_background_run
 from fcscs.ui.app_state import (
-    add_simulation_history,
     get_config,
     get_report_bundle,
     get_simulation_bundle,
@@ -22,7 +20,6 @@ from fcscs.ui.app_state import (
     set_simulation_bundle,
 )
 from fcscs.ui.common import get_batch_output_directory, get_output_directory
-from fcscs.ui.result_views import export_report
 from fcscs.ui.styles import render_page_banner
 
 
@@ -32,26 +29,38 @@ RUN_STAGE_KEY = "workbench_run_stage"
 RUN_MESSAGE_KEY = "workbench_run_message"
 RUN_LOG_KEY = "workbench_run_log"
 RUN_LOG_PATH_KEY = "workbench_run_log_path"
+BACKGROUND_STATUS_PATH_KEY = "workbench_background_status_path"
 RUN_STAGES = ["等待开始", "检查输入", "准备快速测试", "生成事件", "经验强度采样", "训练模型", "蒙特卡洛模拟", "汇总结果", "完成"]
 WIZARD_STEPS = [
     ("data", "数据准备"),
     ("scenario", "情景方案"),
-    ("run", "运行检查"),
+    ("run", "启动运行"),
+    ("status", "运行状态"),
 ]
+
+STEP_DESCRIPTIONS = {
+    "data": "选择基础栅格、扰动约束、环境因子和历史训练数据。",
+    "scenario": "设置森林损失控制情景、蒙特卡洛次数和高级模型参数。",
+    "run": "检查数据与情景配置，设置批次名并启动后台计算。",
+    "status": "查看后台计算进度、切换运行批次，并在需要时终止任务。",
+}
 
 
 def render_workbench_page():
-    render_page_banner("工作台", "")
     _ensure_wizard_state()
 
     config = get_config()
     step_index = int(st.session_state[WIZARD_STEP_KEY])
+    step_key, step_label = WIZARD_STEPS[step_index]
+    render_page_banner(str(step_index + 1) + " " + step_label, STEP_DESCRIPTIONS.get(step_key, ""))
     if step_index == 0:
         _render_data_step(config)
     elif step_index == 1:
         _render_scenario_step(config)
-    else:
+    elif step_index == 2:
         _render_run_step(config)
+    else:
+        _render_run_status_content(config)
 
 
 def _ensure_wizard_state():
@@ -113,12 +122,45 @@ def render_run_log_page():
     _render_recent_log_files(recent_log_files)
 
 
+def render_run_status_page():
+    render_page_banner("运行状态", "查看后台批次进度、终止正在运行的任务，并切换不同批次的状态记录。")
+    _render_run_status_content(get_config())
+
+
+def _render_run_status_content(config):
+    active_status = _get_active_background_status(config)
+
+    c_back, c_result = st.columns([1, 1])
+    with c_back:
+        if st.button("返回启动运行", use_container_width=True, key="status_back_to_run_step"):
+            st.session_state["sidebar_panel"] = "workflow"
+            st.session_state[WIZARD_STEP_KEY] = 2
+            st.rerun()
+    with c_result:
+        if st.button("查看结果", type="primary", use_container_width=True, key="status_go_to_results"):
+            st.session_state["sidebar_panel"] = "results"
+            st.rerun()
+
+    _render_progress_area(active_status)
+    _render_background_job_panel(config, active_status)
+
+    if not active_status:
+        st.info("当前没有选中的后台批次。启动运行后，系统会自动跳转到这里显示进度。")
+
+    if _background_finished(active_status):
+        _render_run_complete_actions()
+
+    _auto_refresh_page(5)
+
+
 def _build_step_labels(config):
     data_ok = _data_ready(config)
     scenario_ok = _scenario_ready(config)
     current_step = int(st.session_state[WIZARD_STEP_KEY])
-    run_ok = get_report_bundle() is not None
-    completed = [data_ok, scenario_ok, run_ok]
+    active_status = _get_active_background_status(config)
+    run_ok = bool(active_status) or get_report_bundle() is not None
+    status_ok = _background_finished(active_status) or get_report_bundle() is not None
+    completed = [data_ok, scenario_ok, run_ok, status_ok]
 
     labels = []
     for index, (_, label) in enumerate(WIZARD_STEPS):
@@ -133,8 +175,6 @@ def _build_step_labels(config):
 
 
 def _render_data_step(current):
-    st.subheader("1 数据准备")
-
     use_raster_data = True
     output_dir = _folder_path_input("输出文件夹", current.output_dir, "wizard_output_dir")
     project_rasters = _find_project_rasters()
@@ -169,9 +209,16 @@ def _render_data_step(current):
     with st.expander("历史训练数据输入", expanded=True):
         use_history_training = True
         st.caption("至少需要两组相同年份的历史森林地上生物量密度、树冠覆盖度和土地利用栅格，系统会按相邻年份构造训练样本。")
-        history_agbd_paths = _render_year_raster_form("历史森林地上生物量密度（AGBD）", current.history_agbd_paths, project_rasters, "wizard_hist_agbd")
-        history_tcc_paths = _render_year_raster_form("历史树冠覆盖度", current.history_tcc_paths, project_rasters, "wizard_hist_tcc")
-        history_lulc_paths = _render_year_raster_form("历史土地利用", current.history_lulc_paths, project_rasters, "wizard_hist_lulc")
+        history_row_count = _history_row_count_input(current)
+        history_agbd_paths = _render_year_raster_form(
+            "历史森林地上生物量密度（AGBD）",
+            current.history_agbd_paths,
+            project_rasters,
+            "wizard_hist_agbd",
+            history_row_count,
+        )
+        history_tcc_paths = _render_year_raster_form("历史树冠覆盖度", current.history_tcc_paths, project_rasters, "wizard_hist_tcc", history_row_count)
+        history_lulc_paths = _render_year_raster_form("历史土地利用", current.history_lulc_paths, project_rasters, "wizard_hist_lulc", history_row_count)
 
     data_missing = _find_data_missing(
         agbd_raster_path,
@@ -257,8 +304,6 @@ def _render_data_step(current):
 
 
 def _render_scenario_step(current):
-    st.subheader("2 情景方案")
-
     preset_names = list_preset_names()
     if st.session_state.get("wizard_preset") not in (None, *preset_names):
         del st.session_state["wizard_preset"]
@@ -331,7 +376,10 @@ def _render_scenario_step(current):
         with b2:
             agbd_to_agc_factor = st.number_input("AGBD 转 AGC 系数", min_value=0.10, max_value=1.00, value=float(current.agbd_to_agc_factor), step=0.01, format="%.2f", key="wizard_agc")
         with b3:
-            severity_method = st.selectbox("扰动强度方法", ["S1", "S2"], index=0 if current.severity_method == "S1" else 1, key="wizard_sev_method")
+            method_labels = ["S1 经验分层抽样", "S2 环境校正抽样"]
+            method_index = 0 if current.severity_method == "S1" else 1
+            method_label = st.selectbox("扰动强度方法", method_labels, index=method_index, key="wizard_sev_method")
+            severity_method = method_label.split(" ")[0]
         with b4:
             base_seed = st.number_input("随机种子", value=current.base_seed, step=1, key="wizard_seed")
         with b5:
@@ -347,11 +395,14 @@ def _render_scenario_step(current):
         with c_scale:
             driver_probability_scale = st.number_input("概率缩放值", min_value=1.0, max_value=10000.0, value=float(current.driver_probability_scale), step=10.0, key="wizard_driver_scale")
 
-        c_sev, c_note = st.columns([1, 2])
-        with c_sev:
-            severity_sample_count = st.number_input("经验强度样本数", min_value=100, max_value=200000, value=current.severity_sample_count, step=100, key="wizard_sev_sample_count")
-        with c_note:
-            st.caption("历史训练数据为必填，系统会按树冠覆盖度、地形、气候水分和人为活动因子分层抽取扰动强度。")
+        severity_sample_count = st.number_input(
+            "经验强度样本数",
+            min_value=100,
+            max_value=200000,
+            value=current.severity_sample_count,
+            step=100,
+            key="wizard_sev_sample_count",
+        )
 
     c_back, c_save = st.columns([1, 2])
     with c_back:
@@ -418,8 +469,6 @@ def _apply_selected_preset():
 
 
 def _render_run_step(config):
-    st.subheader("3 运行检查")
-
     batch_name = st.text_input("运行批次名", value=getattr(config, "batch_name", build_default_batch_name()), key="wizard_batch_name")
     batch_preview_config = config.copy()
     batch_preview_config.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
@@ -450,8 +499,6 @@ def _render_run_step(config):
     else:
         st.caption(f"完整运行将使用情景设置的蒙特卡洛次数：{int(config.mc_n_simulations)} 次。")
 
-    progress_bar, status_table, message_box, log_table = _render_progress_area()
-
     c_back, c_run = st.columns([1, 2])
     with c_back:
         if st.button("返回情景方案", use_container_width=True, key="wizard_back_to_scenario"):
@@ -468,11 +515,15 @@ def _render_run_step(config):
     if run_clicked:
         _clear_results_only()
         run_config = _prepare_run_config(config, batch_name)
-        set_config(run_config)
-        _run_with_progress(run_config, run_mode, int(quick_size), progress_bar, status_table, message_box, log_table)
-
-    if get_report_bundle() is not None:
-        _render_run_complete_actions()
+        try:
+            job = start_background_run(run_config, run_mode, int(quick_size))
+            st.session_state[BACKGROUND_STATUS_PATH_KEY] = str(job["status_path"])
+            st.session_state["sidebar_panel"] = "workflow"
+            st.session_state[WIZARD_STEP_KEY] = 3
+            st.success("后台任务已启动。计算会在独立 Python 进程中继续运行，刷新页面不会中断。")
+            st.rerun()
+        except Exception as error:
+            st.error("后台任务启动失败：" + str(error))
 
 
 def _render_run_complete_actions():
@@ -499,10 +550,15 @@ def _prepare_run_config(config, batch_name):
     return run_config
 
 
-def _render_progress_area():
+def _render_progress_area(active_status=None):
     progress_value = int(st.session_state.get(RUN_PROGRESS_KEY, 0))
     stage = str(st.session_state.get(RUN_STAGE_KEY, "等待开始"))
     message = str(st.session_state.get(RUN_MESSAGE_KEY, "点击开始运行后，这里会显示实时进度。"))
+
+    if active_status:
+        progress_value = int(active_status.get("percent", progress_value))
+        stage = str(active_status.get("stage", stage))
+        message = str(active_status.get("message", message))
 
     if get_report_bundle() is not None and progress_value < 100:
         progress_value = 100
@@ -516,70 +572,141 @@ def _render_progress_area():
     message_box = st.empty()
     message_box.info(message)
     log_table = st.empty()
-    _render_log_table(log_table)
+    _render_log_table(log_table, active_status)
     return progress_bar, status_table, message_box, log_table
 
 
-def _run_with_progress(config, run_mode, quick_size, progress_bar, status_table, message_box, log_table):
-    run_label = run_mode
-    run_config = config
-    log_path = None
+def _get_active_background_status(config):
+    status_path = st.session_state.get(BACKGROUND_STATUS_PATH_KEY)
+    if status_path:
+        status = read_status(status_path)
+        if status and _should_show_status_job(status):
+            status["status_path"] = str(status_path)
+            return status
+        if BACKGROUND_STATUS_PATH_KEY in st.session_state:
+            del st.session_state[BACKGROUND_STATUS_PATH_KEY]
 
-    try:
-        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 1, "检查输入", "正在读取已保存的配置。")
+    output_dir = get_output_directory(config, create=False)
+    recent_jobs = _visible_recent_jobs(output_dir, limit=1)
+    if recent_jobs:
+        st.session_state[BACKGROUND_STATUS_PATH_KEY] = recent_jobs[0].get("status_path", "")
+        return recent_jobs[0]
+    return {}
 
-        if run_mode == "快速测试":
-            _update_progress(progress_bar, status_table, message_box, log_table, log_path, 8, "准备快速测试", "正在准备快速测试输入。")
-            run_config = build_quick_config(config, quick_size)
-            run_label = "快速测试"
 
-        log_path = _start_run_log(run_config)
-        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 10, "检查输入", "运行批次：" + str(getattr(run_config, "batch_name", "")))
+def _render_background_job_panel(config, active_status):
+    output_dir = get_output_directory(config, create=False)
+    recent_jobs = _visible_recent_jobs(output_dir, limit=8)
+    if not active_status and not recent_jobs:
+        return
 
-        result = run_simulation_workflow(
-            run_config,
-            progress_callback=lambda percent, stage, message: _update_progress(
-                progress_bar,
-                status_table,
-                message_box,
-                log_table,
-                log_path,
-                percent,
-                stage,
-                message,
-            ),
+    st.markdown("**后台任务**")
+    if active_status:
+        state_label = _format_job_state(active_status.get("state", ""))
+        st.caption(
+            "当前批次："
+            + str(active_status.get("batch_name", ""))
+            + "；状态："
+            + state_label
+            + "；更新时间："
+            + str(active_status.get("updated_at", ""))
         )
-        set_events(result.events)
-        set_logging_patch_library(result.patch_library)
-        set_simulation_bundle(result.simulation_bundle)
-        set_report_bundle(result.report_bundle)
-        export_dir = get_batch_output_directory(run_config) / "report_exports"
-        export_report(result.report_bundle, export_dir)
+        if active_status.get("state") == "failed" and active_status.get("error"):
+            with st.expander("后台错误详情"):
+                st.code(str(active_status.get("error")), language="text")
+        if _background_running(active_status):
+            if st.button("终止当前运行", type="secondary", use_container_width=True, key="wizard_stop_active_background_job"):
+                ok, message = terminate_background_run(active_status.get("status_path", ""))
+                if ok:
+                    st.warning(message)
+                else:
+                    st.error(message)
+                st.rerun()
 
-        _add_history_from_bundle(result.simulation_bundle, run_label)
-        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 100, "完成", "运行完成，结果已保存，可以查看结果。")
-    except ValueError as error:
-        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 0, "等待开始", "运行前检查失败。")
-        _record_error(log_path, error)
-        st.error(str(error))
-    except Exception as error:
-        _update_progress(progress_bar, status_table, message_box, log_table, log_path, 0, "等待开始", "运行失败。")
-        _record_error(log_path, error)
-        st.error("运行失败：" + str(error))
-        with st.expander("错误详情"):
-            st.code(traceback.format_exc(), language="text")
+    if recent_jobs:
+        rows = []
+        for job in recent_jobs:
+            rows.append(
+                {
+                    "批次": job.get("batch_name", ""),
+                    "状态": _format_job_state(job.get("state", "")),
+                    "进度": str(job.get("percent", 0)) + "%",
+                    "阶段": job.get("stage", ""),
+                    "更新时间": job.get("updated_at", ""),
+                    "目录": job.get("batch_dir", ""),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        selected_batch = st.selectbox("切换查看后台批次", [str(row["批次"]) for row in rows], key="wizard_background_job_select")
+        for job in recent_jobs:
+            if str(job.get("batch_name", "")) == selected_batch:
+                if st.button("查看该批次进度", use_container_width=True, key="wizard_use_selected_background_job"):
+                    st.session_state[BACKGROUND_STATUS_PATH_KEY] = job.get("status_path", "")
+                    st.rerun()
+                break
 
 
-def _update_progress(progress_bar, status_table, message_box, log_table, log_path, percent, stage, message):
-    st.session_state[RUN_PROGRESS_KEY] = int(percent)
-    st.session_state[RUN_STAGE_KEY] = stage
-    st.session_state[RUN_MESSAGE_KEY] = message
-    _append_run_log(log_path, stage, message)
-    progress_bar.progress(int(percent), text=f"{int(percent)}% {stage}")
-    status_table.dataframe(_build_run_stage_frame(stage), use_container_width=True, hide_index=True)
-    message_box.info(message)
-    _render_log_table(log_table)
-    time.sleep(0.15)
+def _visible_recent_jobs(output_dir, limit=8):
+    all_jobs = find_recent_jobs(output_dir, limit=50)
+    visible_jobs = []
+    for job in all_jobs:
+        if _should_show_status_job(job):
+            visible_jobs.append(job)
+    return visible_jobs[:limit]
+
+
+def _should_show_status_job(job):
+    state = str(job.get("state", ""))
+    if state in {"starting", "running"}:
+        return True
+
+    updated_at = _parse_status_time(job.get("updated_at", ""))
+    if updated_at is None:
+        return False
+
+    seconds = (datetime.now() - updated_at).total_seconds()
+    return seconds <= 600
+
+
+def _parse_status_time(text):
+    try:
+        return datetime.strptime(str(text), "%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
+def _auto_refresh_page(seconds):
+    millis = int(seconds * 1000)
+    components.html(
+        f"<script>setTimeout(function(){{window.parent.location.reload();}}, {millis});</script>",
+        height=0,
+    )
+
+
+def _format_job_state(state):
+    state = str(state)
+    if state == "running":
+        return "运行中"
+    if state == "starting":
+        return "启动中"
+    if state == "finished":
+        return "完成"
+    if state == "failed":
+        return "失败"
+    if state == "stopped":
+        return "已终止"
+    return state or "未知"
+
+
+def _background_finished(active_status):
+    return bool(active_status) and active_status.get("state") == "finished"
+
+
+def _background_running(active_status):
+    if not active_status:
+        return False
+    return active_status.get("state") in {"starting", "running"}
 
 
 def _build_run_stage_frame(current_stage):
@@ -602,51 +729,21 @@ def _build_run_stage_frame(current_stage):
     return pd.DataFrame(rows)
 
 
-def _add_history_from_bundle(bundle, run_label):
-    row = {
-        "运行方式": run_label,
-        "运行批次": bundle.summary.get("batch_name", ""),
-        "情景名称": bundle.scenario_name,
-        "模拟次数": bundle.summary["n_simulations"],
-        "平均AGBD": round(bundle.summary["mean_agbd_per_ha"], 4),
-        "平均AGC": round(bundle.summary["mean_agc_per_ha"], 4),
-        "模型R2": round(bundle.summary["mean_model_r2"], 4),
-        "模型MAE": round(bundle.summary["mean_model_mae"], 4),
-    }
-    add_simulation_history(row)
+def _render_log_table(log_table, active_status=None):
+    if active_status:
+        rows = [
+            {
+                "时间": active_status.get("updated_at", ""),
+                "阶段": active_status.get("stage", ""),
+                "消息": active_status.get("message", ""),
+            }
+        ]
+        log_table.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        status_path = active_status.get("status_path")
+        if status_path:
+            st.caption("状态文件：" + str(status_path))
+        return
 
-
-def _start_run_log(config):
-    st.session_state[RUN_LOG_KEY] = []
-    log_dir = get_batch_output_directory(config) / "run_logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = log_dir / (timestamp + "_" + sanitize_scenario_name(config.scenario_name) + ".log")
-    st.session_state[RUN_LOG_PATH_KEY] = str(log_path)
-    _append_run_log(log_path, "开始", "运行日志已创建：" + str(log_path))
-    return log_path
-
-
-def _append_run_log(log_path, stage, message):
-    timestamp = datetime.now().strftime("%H:%M:%S")
-    row = {"时间": timestamp, "阶段": stage, "消息": message}
-    log_rows = list(st.session_state.get(RUN_LOG_KEY, []))
-    log_rows.append(row)
-    st.session_state[RUN_LOG_KEY] = log_rows
-    if log_path is not None:
-        with open(log_path, "a", encoding="utf-8") as file:
-            file.write(f"{timestamp} [{stage}] {message}\n")
-
-
-def _record_error(log_path, error):
-    error_text = traceback.format_exc()
-    _append_run_log(log_path, "异常", str(error))
-    if log_path is not None:
-        with open(log_path, "a", encoding="utf-8") as file:
-            file.write(error_text)
-
-
-def _render_log_table(log_table):
     log_rows = st.session_state.get(RUN_LOG_KEY, [])
     if not log_rows:
         log_table.caption("运行日志将在开始运行后显示。")
@@ -678,8 +775,10 @@ def _render_recent_log_files(log_files):
     rows = []
     for path in log_files:
         stat = path.stat()
+        batch_name = path.parent.parent.name
         rows.append(
             {
+                "批次": batch_name,
                 "文件名": path.name,
                 "修改时间": datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
                 "大小 KB": round(stat.st_size / 1024, 2),
@@ -688,8 +787,15 @@ def _render_recent_log_files(log_files):
         )
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
 
-    selected_name = st.selectbox("查看日志内容", [path.name for path in log_files], key="recent_log_file_select")
-    selected_path = next(path for path in log_files if path.name == selected_name)
+    labels = []
+    label_map = {}
+    for path in log_files:
+        label = path.parent.parent.name + " / " + path.name
+        labels.append(label)
+        label_map[label] = path
+
+    selected_name = st.selectbox("查看日志内容", labels, key="recent_log_file_select")
+    selected_path = label_map[selected_name]
     try:
         text = selected_path.read_text(encoding="utf-8")
     except Exception as error:
@@ -704,7 +810,8 @@ def _build_preflight_rows(config):
     rows.append(_check_row("数据配置", _data_ready(config), "必填数据已配置"))
     rows.append(_check_row("情景年份", _scenario_ready(config), f"{config.base_year} 到 {config.target_year}"))
     rows.append(_check_row("输出目录", _output_dir_ready(config), getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")))
-    rows.append(_check_row("运行模式", True, "真实栅格数据"))
+    history_ready, history_detail = _history_training_ready_detail(config)
+    rows.append(_check_row("历史训练数据", history_ready, history_detail))
     return rows
 
 
@@ -1066,15 +1173,44 @@ def _prepare_fixed_rows(items, count, empty_row):
     return rows[:count]
 
 
-def _render_year_raster_form(label, text_value, project_rasters, key_prefix):
+def _history_row_count_input(config):
+    existing_count = max(
+        len(_parse_year_path_items(config.history_agbd_paths)),
+        len(_parse_year_path_items(config.history_tcc_paths)),
+        len(_parse_year_path_items(config.history_lulc_paths)),
+        int(getattr(config, "logging_library_years", 6)),
+        2,
+    )
+    if "wizard_history_row_count" not in st.session_state:
+        st.session_state["wizard_history_row_count"] = existing_count
+    return int(
+        st.number_input(
+            "历史年份行数",
+            min_value=2,
+            max_value=30,
+            step=1,
+            key="wizard_history_row_count",
+        )
+    )
+
+
+def _render_year_raster_form(label, text_value, project_rasters, key_prefix, row_count):
     st.markdown(f'<div class="history-group-title">{label}</div>', unsafe_allow_html=True)
+    year_head, path_head, browse_head = st.columns([1.45, 6.7, 0.85])
+    with year_head:
+        st.caption("年份")
+    with path_head:
+        st.caption("栅格文件")
+    with browse_head:
+        st.caption("操作")
+
     items = _parse_year_path_items(text_value)
-    rows = _prepare_fixed_rows(items, 6, {"year": "", "path": ""})
+    rows = _prepare_fixed_rows(items, int(row_count), {"year": "", "path": ""})
     result = []
     for index in range(len(rows)):
         row = rows[index]
         year_value, path_value = _render_year_raster_row(row, project_rasters, key_prefix, index)
-        if str(year_value).strip() and str(path_value).strip():
+        if str(path_value).strip():
             result.append({"year": str(year_value).strip(), "path": str(path_value).strip()})
     return _build_year_path_text(result)
 
@@ -1084,6 +1220,7 @@ def _render_year_raster_row(row, project_rasters, key_prefix, index):
     path_key = f"{key_prefix}_path_{index}"
     select_key = path_key + "_path_combo"
     pending_key = path_key + "_pending_path"
+    path_watch_key = path_key + "_year_source_path"
     pending_value = ""
 
     if pending_key in st.session_state:
@@ -1095,13 +1232,30 @@ def _render_year_raster_row(row, project_rasters, key_prefix, index):
     default_value = pending_value or session_value or row.get("path", "")
     options = _build_path_options(default_value, project_rasters, session_value)
 
-    row_label_col, year_col, path_col, browse_col = st.columns([1.2, 0.85, 6.1, 0.85])
-    with row_label_col:
-        st.caption("年份数据")
+    path_for_year = str(default_value).strip()
+    extracted_year = _extract_year_from_path(path_for_year)
+    default_year = str(row.get("year", "")).strip()
+    if not default_year:
+        default_year = extracted_year
+
+    current_year = str(st.session_state.get(year_key, default_year)).strip()
+    last_path = str(st.session_state.get(path_watch_key, "")).strip()
+    if extracted_year and path_for_year and path_for_year != last_path:
+        st.session_state[year_key] = extracted_year
+        st.session_state[path_watch_key] = path_for_year
+    elif extracted_year and not _valid_year_text(current_year):
+        st.session_state[year_key] = extracted_year
+
+    year_col, path_col, browse_col = st.columns([1.45, 6.7, 0.85])
     with year_col:
-        year_value = st.text_input("年份", value=str(row.get("year", "")), key=year_key, label_visibility="collapsed", placeholder="2020")
+        if year_key in st.session_state:
+            year_value = st.text_input("年份", key=year_key, label_visibility="collapsed", placeholder="2020")
+        else:
+            year_value = st.text_input("年份", value=default_year, key=year_key, label_visibility="collapsed", placeholder="2020")
     with path_col:
         path_value = _render_path_combo("路径", options, select_key, default_value)
+        if not str(year_value).strip():
+            year_value = _extract_year_from_path(path_value)
     with browse_col:
         if st.button("浏览", key=f"{path_key}_browse", use_container_width=True):
             picked_path = _open_windows_file_dialog("历史栅格")
@@ -1122,13 +1276,31 @@ def _parse_year_path_items(text_value):
 
 def _build_year_path_text(items):
     lines = []
+    missing_index = 1
     for item in items:
         year_text = str(item.get("year", "")).strip()
         path_text = str(item.get("path", "")).strip()
-        if not year_text or not path_text:
+        if not path_text:
+            continue
+        if not year_text:
+            lines.append("缺少年份" + str(missing_index) + "=" + path_text)
+            missing_index += 1
             continue
         lines.append(year_text + "=" + path_text)
     return "\n".join(lines)
+
+
+def _extract_year_from_path(path_text):
+    text = str(path_text).replace("\\", "/")
+    file_name = text.split("/")[-1]
+    matches = re.findall(r"(19\d{2}|20\d{2}|21\d{2})", file_name)
+    if not matches:
+        return ""
+    return matches[-1]
+
+
+def _valid_year_text(text):
+    return re.fullmatch(r"(19\d{2}|20\d{2}|21\d{2})", str(text).strip()) is not None
 
 
 def _build_env_raster_text(terrain_path, climate_path, human_path, extra_items):
@@ -1215,8 +1387,9 @@ def _find_data_missing(
     ]
     missing = []
     for name, path_text in items:
-        if not path_exists(path_text):
-            missing.append(name)
+        problem = _raster_path_problem(name, path_text)
+        if problem:
+            missing.append(problem)
 
     history_missing = _find_history_data_missing(history_agbd_paths, history_tcc_paths, history_lulc_paths)
     missing.extend(history_missing)
@@ -1224,20 +1397,28 @@ def _find_data_missing(
 
 
 def _find_history_data_missing(history_agbd_paths, history_tcc_paths, history_lulc_paths):
-    agbd_paths = parse_year_raster_paths(history_agbd_paths)
-    tcc_paths = parse_year_raster_paths(history_tcc_paths)
-    lulc_paths = parse_year_raster_paths(history_lulc_paths)
+    agbd_paths, agbd_errors = _validate_year_raster_paths("历史森林地上生物量密度（AGBD）", history_agbd_paths)
+    tcc_paths, tcc_errors = _validate_year_raster_paths("历史树冠覆盖度", history_tcc_paths)
+    lulc_paths, lulc_errors = _validate_year_raster_paths("历史土地利用", history_lulc_paths)
 
     missing = []
-    common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
+    missing.extend(agbd_errors)
+    missing.extend(tcc_errors)
+    missing.extend(lulc_errors)
+    if missing:
+        return missing
+
+    agbd_years = set(agbd_paths.keys())
+    tcc_years = set(tcc_paths.keys())
+    lulc_years = set(lulc_paths.keys())
+    common_years = sorted(agbd_years & tcc_years & lulc_years)
+    all_years = sorted(agbd_years | tcc_years | lulc_years)
+    if all_years and set(common_years) != set(all_years):
+        missing.append("历史AGBD、树冠覆盖度和土地利用年份不一致，请使用相同年份")
+        return missing
+
     valid_years = []
     for year in common_years:
-        if not path_exists(agbd_paths[year]):
-            continue
-        if not path_exists(tcc_paths[year]):
-            continue
-        if not path_exists(lulc_paths[year]):
-            continue
         valid_years.append(year)
 
     if len(valid_years) < 2:
@@ -1253,6 +1434,63 @@ def _find_history_data_missing(history_agbd_paths, history_tcc_paths, history_lu
         missing.append("历史训练数据需要至少一组连续年份")
 
     return missing
+
+
+def _validate_year_raster_paths(label, text_value):
+    paths = {}
+    errors = []
+    raw_text = str(text_value or "").strip()
+    if raw_text == "":
+        return paths, [label + "未填写"]
+    pieces = raw_text.replace("\r", "\n").replace(";", "\n").split("\n")
+    for piece in pieces:
+        clean_piece = piece.strip()
+        if clean_piece == "" or "=" not in clean_piece:
+            continue
+        year_text, path_text = clean_piece.split("=", 1)
+        year_text = year_text.strip()
+        path_text = path_text.strip()
+        if path_text == "":
+            continue
+        if not _valid_year_text(year_text):
+            errors.append(label + "存在未填写或格式不正确的年份")
+            continue
+        problem = _raster_path_problem(label + " " + year_text, path_text)
+        if problem:
+            errors.append(problem)
+            continue
+        year = int(year_text)
+        if year in paths:
+            errors.append(label + "存在重复年份：" + str(year))
+            continue
+        paths[year] = path_text
+    if not paths and not errors:
+        errors.append(label + "未填写")
+    return paths, errors
+
+
+def _raster_path_problem(label, path_text):
+    text = str(path_text or "").strip()
+    if text == "":
+        return label + "未填写"
+    suffix = resolve_input_path(text).suffix.lower()
+    if suffix not in {".tif", ".tiff"}:
+        return label + "格式不正确，需要 GeoTIFF（.tif 或 .tiff）"
+    if not path_exists(text):
+        return label + "文件不存在或路径无法读取"
+    return ""
+
+
+def _history_training_ready_detail(config):
+    errors = _find_history_data_missing(config.history_agbd_paths, config.history_tcc_paths, config.history_lulc_paths)
+    if errors:
+        return False, errors[0]
+
+    agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
+    years = sorted(agbd_paths.keys())
+    if not years:
+        return False, "历史训练数据未填写"
+    return True, "共同年份：" + "、".join(str(year) for year in years)
 
 
 def _copy_data_settings(source, target):

@@ -673,6 +673,8 @@ class SeverityEngine:
         rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type))
         future_features = self._build_future_severity_features(records, config)
         picked = self._sample_by_strata(distribution, future_features, rng)
+        if str(getattr(config, "severity_method", "S1")).upper() == "S2":
+            picked = self._adjust_severity_by_environment(picked, future_features)
         if event_type in {"urban_conv", "urban_conversion"}:
             picked = np.maximum(picked, 0.62)
         if event_type == "urban_edge":
@@ -853,6 +855,22 @@ class SeverityEngine:
             result.append(float(rng.choice(pool)))
         return np.asarray(result, dtype=np.float32)
 
+    def _adjust_severity_by_environment(self, severity_values, future_features):
+        adjusted = severity_values.astype(np.float32).copy()
+        for index in range(len(adjusted)):
+            slope = float(future_features.iloc[index].get("slope", 0.5))
+            moisture = float(future_features.iloc[index].get("moisture", 0.5))
+            accessibility = float(future_features.iloc[index].get("accessibility", 0.5))
+
+            pressure = 0.0
+            pressure = pressure + (accessibility - 0.5) * 0.18
+            pressure = pressure + (slope - 0.5) * 0.08
+            pressure = pressure + (0.5 - moisture) * 0.10
+            factor = 1.0 + pressure
+            adjusted[index] = adjusted[index] * factor
+
+        return np.clip(adjusted, 0.0, 0.95)
+
     def _normalize_tcc(self, surface):
         result = surface.astype(np.float32).copy()
         max_value = np.nanmax(result)
@@ -895,16 +913,6 @@ class SeverityEngine:
             "urban_conversion": 401,
             "urban_edge": 501,
         }.get(event_type, 601)
-
-    def _build_default_severity(self, records, event_type, config):
-        seed_offset = self._severity_seed_offset(event_type)
-        rng = np.random.default_rng(int(config.base_seed) + seed_offset)
-        base = rng.beta(2.0, 3.0, size=len(records))
-        if event_type in {"urban_conv", "urban_conversion"}:
-            base = np.maximum(base, 0.62)
-        elif event_type == "urban_edge":
-            base = base * 0.72
-        return base
 
     def _classify(self, value):
         value = float(value)

@@ -22,7 +22,7 @@ def run_simulation_workflow(config, progress_callback=None):
     raw_events = scenario_engine.generate_all_events(config)
     patch_library = scenario_engine.last_patch_library
 
-    _notify(progress_callback, 36, "经验强度采样", "正在根据历史树冠覆盖度变化和环境因子分层抽取扰动强度。")
+    _notify(progress_callback, 36, "经验强度采样", "正在准备历史扰动强度样本。")
     severity_events = severity_engine.assign_all(raw_events, config)
 
     _notify(progress_callback, 52, "训练模型", "正在构造训练样本并训练 AGBD 响应模型。")

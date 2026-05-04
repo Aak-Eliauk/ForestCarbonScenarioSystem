@@ -95,7 +95,7 @@ def apply_base_style():
         }
 
         [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
-            padding: 0.55rem 1rem 1.25rem 1rem;
+            padding: 0.18rem 1rem 1.25rem 1rem;
         }
 
         [data-testid="stSidebar"] * {
@@ -114,7 +114,7 @@ def apply_base_style():
         .sidebar-brand {
             padding: 0 0 0.85rem 0;
             border-bottom: 1px solid rgba(255, 250, 240, 0.16);
-            margin-bottom: 0.9rem;
+            margin: -0.16rem 0 0.9rem 0;
         }
 
         .brand-lockup {
@@ -124,15 +124,17 @@ def apply_base_style():
         }
 
         .brand-mark {
-            width: 2.35rem;
-            height: 2.35rem;
-            flex: 0 0 2.35rem;
+            width: 4.1rem;
+            height: 3.15rem;
+            flex: 0 0 4.1rem;
             display: grid;
             place-items: center;
             border-radius: 8px;
             background: linear-gradient(145deg, rgba(255, 250, 240, 0.96), rgba(212, 232, 211, 0.94));
             color: #163a2a !important;
-            font-size: 0.82rem;
+            font-size: 0.7rem;
+            line-height: 1.05;
+            text-align: center;
             font-weight: 820;
             letter-spacing: 0;
             box-shadow: 0 12px 28px rgba(8, 28, 18, 0.24);
@@ -347,15 +349,16 @@ def apply_base_style():
         }
 
         .uncertainty-icon {
-            width: 2.45rem;
+            width: 3.1rem;
             height: 2.45rem;
-            flex: 0 0 2.45rem;
+            flex: 0 0 3.1rem;
             display: grid;
             place-items: center;
             border-radius: 8px;
             background: rgba(31, 74, 55, 0.1);
             color: #1f4a37;
-            font-size: 0.72rem;
+            font-size: 0.68rem;
+            letter-spacing: -0.01rem;
             font-weight: 820;
         }
 

@@ -31,16 +31,19 @@ def render_results_page():
     current_report = get_report_bundle()
     current_bundle = get_simulation_bundle()
     history_items = _discover_history_results()
+    manual_item = _render_manual_result_picker()
 
     options = []
     if current_report is not None:
         options.append(("current", "当前会话结果：" + current_report.scenario_name, None))
+    if manual_item is not None:
+        options.append(("history", "手动打开：" + manual_item["label"], manual_item))
     for item in history_items:
         options.append(("history", item["label"], item))
 
     if not options:
         st.info("还没有可查看的结果。完成一次模拟后，系统会自动保存结果；已有栅格输出也会显示在这里。")
-        if st.button("返回运行检查", type="primary", use_container_width=True, key="results_back_to_run"):
+        if st.button("返回启动运行", type="primary", use_container_width=True, key="results_back_to_run"):
             st.session_state["sidebar_panel"] = "workflow"
             st.session_state["workbench_wizard_step"] = 2
             st.rerun()
@@ -55,6 +58,30 @@ def render_results_page():
         _render_current_result(current_report, current_bundle)
     else:
         _render_history_result(item)
+
+
+def _render_manual_result_picker():
+    with st.expander("打开其他结果文件夹", expanded=False):
+        current_path = st.session_state.get("manual_result_folder", "")
+        c_path, c_button = st.columns([5, 1])
+        with c_path:
+            folder_text = st.text_input("结果文件夹路径", value=current_path, key="manual_result_folder_input")
+        with c_button:
+            st.write("")
+            if st.button("选择", use_container_width=True, key="manual_result_folder_browse"):
+                picked_path = _open_windows_folder_dialog("选择结果文件夹")
+                if picked_path:
+                    st.session_state["manual_result_folder"] = picked_path
+                    st.rerun()
+
+        if st.button("打开该文件夹", use_container_width=True, key="manual_result_folder_open"):
+            st.session_state["manual_result_folder"] = folder_text
+            st.rerun()
+
+    manual_path = st.session_state.get("manual_result_folder", "")
+    if not manual_path:
+        return None
+    return _build_manual_result_item(manual_path)
 
 
 def _render_current_result(report, bundle):
@@ -139,6 +166,45 @@ def _discover_history_results():
             )
 
     return items
+
+
+def _build_manual_result_item(folder_text):
+    path = Path(str(folder_text).strip())
+    if not path.exists() or not path.is_dir():
+        st.warning("手动选择的结果文件夹不存在。")
+        return None
+
+    report_dir = path
+    if (path / "report_exports").exists():
+        report_dir = path / "report_exports"
+
+    if (report_dir / "summary.csv").exists() or (report_dir / "simulation_distribution.csv").exists():
+        batch_name = path.name
+        if report_dir.name == "report_exports":
+            batch_name = report_dir.parent.name
+        return {
+            "kind": "report",
+            "scenario_name": _read_summary_value(report_dir, "scenario_name", batch_name),
+            "batch_name": batch_name,
+            "path": report_dir,
+            "label": batch_name,
+        }
+
+    raster_dir = path
+    if (path / "raster_predictions").exists():
+        raster_dir = path / "raster_predictions"
+    output_files = _find_raster_output_files(raster_dir)
+    if output_files:
+        return {
+            "kind": "raster",
+            "scenario_name": path.name,
+            "batch_name": path.name,
+            "path": raster_dir,
+            "label": path.name,
+        }
+
+    st.warning("该文件夹中没有找到 summary.csv 或 GeoTIFF 结果文件。")
+    return None
 
 
 def _load_history_report(item):
@@ -235,3 +301,18 @@ def _read_summary_value(export_dir, metric_name, default_value):
             if value is not None and str(value).strip() != "":
                 return str(value)
     return default_value
+
+
+def _open_windows_folder_dialog(title):
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        root.attributes("-topmost", True)
+        picked_path = filedialog.askdirectory(title=title)
+        root.destroy()
+        return picked_path
+    except Exception:
+        return ""

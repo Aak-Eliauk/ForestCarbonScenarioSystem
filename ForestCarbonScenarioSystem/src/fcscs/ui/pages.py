@@ -2,7 +2,11 @@ import streamlit as st
 
 from fcscs.ui.app_state import init_state
 from fcscs.ui.page_results import render_results_page
-from fcscs.ui.page_workbench import render_run_log_page, render_workbench_page, render_workbench_step_sidebar
+from fcscs.ui.page_workbench import (
+    render_run_log_page,
+    render_workbench_page,
+    render_workbench_step_sidebar,
+)
 from fcscs.ui.styles import apply_base_style
 
 
@@ -35,7 +39,7 @@ def render_sidebar():
         """
         <div class="sidebar-brand">
             <div class="brand-lockup">
-                <div class="brand-mark">FC</div>
+                <div class="brand-mark">Forest<br>Carbon</div>
                 <div class="brand-copy">
                     <div class="brand-kicker">城镇扩张限制 · 采伐管控</div>
                     <h1>森林损失情景控制与蒙特卡洛碳储量模拟系统</h1>
