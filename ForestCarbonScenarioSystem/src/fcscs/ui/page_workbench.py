@@ -4,7 +4,6 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
 
 from fcscs.config.defaults import ScenarioConfig, build_default_batch_name, build_preset_config, list_preset_names, sanitize_scenario_name
 from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists, resolve_input_path
@@ -30,6 +29,7 @@ RUN_MESSAGE_KEY = "workbench_run_message"
 RUN_LOG_KEY = "workbench_run_log"
 RUN_LOG_PATH_KEY = "workbench_run_log_path"
 BACKGROUND_STATUS_PATH_KEY = "workbench_background_status_path"
+RUN_STARTING_KEY = "workbench_background_starting"
 RUN_STAGES = ["等待开始", "检查输入", "准备快速测试", "生成事件", "经验强度采样", "训练模型", "蒙特卡洛模拟", "汇总结果", "完成"]
 WIZARD_STEPS = [
     ("data", "数据准备"),
@@ -128,8 +128,6 @@ def render_run_status_page():
 
 
 def _render_run_status_content(config):
-    active_status = _get_active_background_status(config)
-
     c_back, c_result = st.columns([1, 1])
     with c_back:
         if st.button("返回启动运行", use_container_width=True, key="status_back_to_run_step"):
@@ -141,6 +139,22 @@ def _render_run_status_content(config):
             st.session_state["sidebar_panel"] = "results"
             st.rerun()
 
+    _render_run_status_live_area()
+
+
+if hasattr(st, "fragment"):
+    @st.fragment(run_every="5s")
+    def _render_run_status_live_area():
+        _render_run_status_live_content()
+else:
+    def _render_run_status_live_area():
+        _render_run_status_live_content()
+        st.caption("当前 Streamlit 版本不支持局部定时刷新，可点击页面按钮或切换批次后刷新状态。")
+
+
+def _render_run_status_live_content():
+    config = get_config()
+    active_status = _get_active_background_status(config)
     _render_progress_area(active_status)
     _render_background_job_panel(config, active_status)
 
@@ -149,8 +163,6 @@ def _render_run_status_content(config):
 
     if _background_finished(active_status):
         _render_run_complete_actions()
-
-    _auto_refresh_page(5)
 
 
 def _build_step_labels(config):
@@ -469,6 +481,10 @@ def _apply_selected_preset():
 
 
 def _render_run_step(config):
+    starting_job = bool(st.session_state.get(RUN_STARTING_KEY, False))
+    running_jobs = _running_background_jobs(config)
+    running_count = len(running_jobs)
+
     batch_name = st.text_input("运行批次名", value=getattr(config, "batch_name", build_default_batch_name()), key="wizard_batch_name")
     batch_preview_config = config.copy()
     batch_preview_config.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
@@ -483,6 +499,8 @@ def _render_run_step(config):
 
     if not can_run:
         st.warning("请先处理未通过的检查项。")
+    if starting_job:
+        st.info("后台进程正在启动，请稍候。进程完全启动前不能重复点击开始运行。")
 
     run_mode = st.radio(
         "运行方式",
@@ -499,30 +517,55 @@ def _render_run_step(config):
     else:
         st.caption(f"完整运行将使用情景设置的蒙特卡洛次数：{int(config.mc_n_simulations)} 次。")
 
+    max_running_jobs = _suggest_background_job_limit(config, run_mode)
+    too_many_jobs = running_count >= max_running_jobs
+    if running_count >= 2 and not too_many_jobs:
+        st.warning(
+            "当前已有 "
+            + str(running_count)
+            + " 个后台批次正在运行，继续多开可能造成系统卡顿。建议确认机器空闲后再启动。"
+        )
+    if too_many_jobs:
+        st.error(
+            "当前已有 "
+            + str(running_count)
+            + " 个后台批次正在运行，已达到建议上限 "
+            + str(max_running_jobs)
+            + " 个。请先等待任务完成，或到运行状态页终止部分批次。"
+        )
+
     c_back, c_run = st.columns([1, 2])
     with c_back:
         if st.button("返回情景方案", use_container_width=True, key="wizard_back_to_scenario"):
             _go_to_step(1)
     with c_run:
         run_clicked = st.button(
-            "开始运行",
+            "正在启动..." if starting_job else "开始运行",
             type="primary",
             use_container_width=True,
-            disabled=not can_run,
+            disabled=(not can_run) or starting_job or too_many_jobs,
             key="wizard_start_run",
         )
 
     if run_clicked:
+        st.session_state[RUN_STARTING_KEY] = True
         _clear_results_only()
         run_config = _prepare_run_config(config, batch_name)
         try:
-            job = start_background_run(run_config, run_mode, int(quick_size))
+            with st.spinner("正在启动后台计算进程，请稍候..."):
+                latest_running_count = len(_running_background_jobs(config))
+                latest_limit = _suggest_background_job_limit(config, run_mode)
+                if latest_running_count >= latest_limit:
+                    raise RuntimeError("后台运行批次数已达到建议上限，请稍后再启动新任务。")
+                job = start_background_run(run_config, run_mode, int(quick_size))
             st.session_state[BACKGROUND_STATUS_PATH_KEY] = str(job["status_path"])
+            st.session_state[RUN_STARTING_KEY] = False
             st.session_state["sidebar_panel"] = "workflow"
             st.session_state[WIZARD_STEP_KEY] = 3
             st.success("后台任务已启动。计算会在独立 Python 进程中继续运行，刷新页面不会中断。")
             st.rerun()
         except Exception as error:
+            st.session_state[RUN_STARTING_KEY] = False
             st.error("后台任务启动失败：" + str(error))
 
 
@@ -656,6 +699,61 @@ def _visible_recent_jobs(output_dir, limit=8):
     return visible_jobs[:limit]
 
 
+def _running_background_jobs(config):
+    output_dir = get_output_directory(config, create=False)
+    all_jobs = find_recent_jobs(output_dir, limit=50)
+    running_jobs = []
+    for job in all_jobs:
+        state = str(job.get("state", ""))
+        if state in {"starting", "running"}:
+            running_jobs.append(job)
+    return running_jobs
+
+
+def _suggest_background_job_limit(config, run_mode):
+    limit = 4
+    if run_mode == "完整运行":
+        limit = 3
+    if int(config.mc_n_simulations) >= 300:
+        limit = min(limit, 3)
+
+    available_memory = _available_memory_gb()
+    if available_memory is None:
+        return limit
+    if available_memory < 4:
+        return 2
+    if available_memory < 8:
+        return min(limit, 3)
+    return limit
+
+
+def _available_memory_gb():
+    try:
+        import ctypes
+
+        class MemoryStatus(ctypes.Structure):
+            _fields_ = [
+                ("dwLength", ctypes.c_ulong),
+                ("dwMemoryLoad", ctypes.c_ulong),
+                ("ullTotalPhys", ctypes.c_ulonglong),
+                ("ullAvailPhys", ctypes.c_ulonglong),
+                ("ullTotalPageFile", ctypes.c_ulonglong),
+                ("ullAvailPageFile", ctypes.c_ulonglong),
+                ("ullTotalVirtual", ctypes.c_ulonglong),
+                ("ullAvailVirtual", ctypes.c_ulonglong),
+                ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+            ]
+
+        status = MemoryStatus()
+        status.dwLength = ctypes.sizeof(MemoryStatus)
+        ok = ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status))
+        if not ok:
+            return None
+        return float(status.ullAvailPhys) / 1024 / 1024 / 1024
+    except Exception:
+        return None
+
+
 def _should_show_status_job(job):
     state = str(job.get("state", ""))
     if state in {"starting", "running"}:
@@ -674,14 +772,6 @@ def _parse_status_time(text):
         return datetime.strptime(str(text), "%Y-%m-%d %H:%M:%S")
     except Exception:
         return None
-
-
-def _auto_refresh_page(seconds):
-    millis = int(seconds * 1000)
-    components.html(
-        f"<script>setTimeout(function(){{window.parent.location.reload();}}, {millis});</script>",
-        height=0,
-    )
 
 
 def _format_job_state(state):
