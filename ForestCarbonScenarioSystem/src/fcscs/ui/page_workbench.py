@@ -30,6 +30,7 @@ RUN_LOG_KEY = "workbench_run_log"
 RUN_LOG_PATH_KEY = "workbench_run_log_path"
 BACKGROUND_STATUS_PATH_KEY = "workbench_background_status_path"
 RUN_STARTING_KEY = "workbench_background_starting"
+LAST_RENDER_STEP_KEY = "workbench_last_render_step"
 RUN_STAGES = ["等待开始", "检查输入", "准备快速测试", "生成事件", "经验强度采样", "训练模型", "蒙特卡洛模拟", "汇总结果", "完成"]
 WIZARD_STEPS = [
     ("data", "数据准备"),
@@ -51,6 +52,7 @@ def render_workbench_page():
 
     config = get_config()
     step_index = int(st.session_state[WIZARD_STEP_KEY])
+    _refresh_run_batch_name_when_opening_step(config, step_index)
     step_key, step_label = WIZARD_STEPS[step_index]
     render_page_banner(str(step_index + 1) + " " + step_label, STEP_DESCRIPTIONS.get(step_key, ""))
     if step_index == 0:
@@ -77,17 +79,29 @@ def _ensure_wizard_state():
     st.session_state[WIZARD_STEP_KEY] = current
 
 
-def render_workbench_step_sidebar():
+def _refresh_run_batch_name_when_opening_step(config, step_index):
+    previous_step = st.session_state.get(LAST_RENDER_STEP_KEY)
+    if step_index == 2 and previous_step != 2:
+        st.session_state["wizard_batch_name"] = build_default_batch_name(config.scenario_name)
+    st.session_state[LAST_RENDER_STEP_KEY] = step_index
+
+
+def render_workbench_step_sidebar(active_panel="workflow"):
     _ensure_wizard_state()
     config = get_config()
     labels = _build_step_labels(config)
     current_step = int(st.session_state[WIZARD_STEP_KEY])
-    selected = st.sidebar.radio("流程步骤", labels, index=current_step)
-    selected_index = labels.index(selected)
-    if selected_index != current_step:
-        st.session_state[WIZARD_STEP_KEY] = selected_index
-        st.session_state["sidebar_panel"] = "workflow"
-        st.rerun()
+    st.sidebar.markdown('<div class="sidebar-section-label">流程步骤</div>', unsafe_allow_html=True)
+    for index, label in enumerate(labels):
+        is_current_step = active_panel == "workflow" and index == current_step
+        if is_current_step:
+            st.sidebar.markdown('<div class="sidebar-nav-item active">' + label + "</div>", unsafe_allow_html=True)
+            continue
+
+        if st.sidebar.button(label, key="sidebar_step_jump_" + str(index), type="secondary", use_container_width=True):
+            st.session_state[WIZARD_STEP_KEY] = index
+            st.session_state["sidebar_panel"] = "workflow"
+            st.rerun()
 
 
 def render_run_log_page():
@@ -485,9 +499,11 @@ def _render_run_step(config):
     running_jobs = _running_background_jobs(config)
     running_count = len(running_jobs)
 
-    batch_name = st.text_input("运行批次名", value=getattr(config, "batch_name", build_default_batch_name()), key="wizard_batch_name")
+    if "wizard_batch_name" not in st.session_state:
+        st.session_state["wizard_batch_name"] = build_default_batch_name(config.scenario_name)
+    batch_name = st.text_input("运行批次名", key="wizard_batch_name")
     batch_preview_config = config.copy()
-    batch_preview_config.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
+    batch_preview_config.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name(config.scenario_name))
     batch_dir = get_batch_output_directory(batch_preview_config, create=False)
     st.caption("本次结果将保存到：" + str(batch_dir))
     if batch_dir.exists():
@@ -559,6 +575,7 @@ def _render_run_step(config):
                     raise RuntimeError("后台运行批次数已达到建议上限，请稍后再启动新任务。")
                 job = start_background_run(run_config, run_mode, int(quick_size))
             st.session_state[BACKGROUND_STATUS_PATH_KEY] = str(job["status_path"])
+            st.session_state[RUN_LOG_PATH_KEY] = str(job.get("run_log_path", ""))
             st.session_state[RUN_STARTING_KEY] = False
             st.session_state["sidebar_panel"] = "workflow"
             st.session_state[WIZARD_STEP_KEY] = 3
@@ -582,7 +599,7 @@ def _render_run_complete_actions():
 
 def _prepare_run_config(config, batch_name):
     run_config = config.copy()
-    safe_batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
+    safe_batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name(config.scenario_name))
     run_config.batch_name = safe_batch_name
 
     batch_dir = get_batch_output_directory(run_config, create=False)
@@ -821,17 +838,22 @@ def _build_run_stage_frame(current_stage):
 
 def _render_log_table(log_table, active_status=None):
     if active_status:
-        rows = [
-            {
-                "时间": active_status.get("updated_at", ""),
-                "阶段": active_status.get("stage", ""),
-                "消息": active_status.get("message", ""),
-            }
-        ]
+        rows = _read_run_event_rows(active_status.get("run_log_path", ""))
+        if not rows:
+            rows = [
+                {
+                    "时间": active_status.get("updated_at", ""),
+                    "阶段": active_status.get("stage", ""),
+                    "消息": active_status.get("message", ""),
+                }
+            ]
         log_table.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
         status_path = active_status.get("status_path")
         if status_path:
             st.caption("状态文件：" + str(status_path))
+        run_log_path = active_status.get("run_log_path")
+        if run_log_path:
+            st.caption("日志文件：" + str(run_log_path))
         return
 
     log_rows = st.session_state.get(RUN_LOG_KEY, [])
@@ -842,6 +864,26 @@ def _render_log_table(log_table, active_status=None):
     log_path = st.session_state.get(RUN_LOG_PATH_KEY)
     if log_path:
         st.caption("日志文件：" + str(log_path))
+
+
+def _read_run_event_rows(log_path_text, limit=10):
+    log_path = Path(str(log_path_text or ""))
+    if not log_path.exists():
+        return []
+
+    try:
+        lines = log_path.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+    rows = []
+    for line in lines[-limit:]:
+        parts = line.split(" | ", 4)
+        if len(parts) == 5:
+            rows.append({"时间": parts[0], "状态": parts[1], "进度": parts[2], "阶段": parts[3], "消息": parts[4]})
+        else:
+            rows.append({"时间": "", "状态": "", "进度": "", "阶段": "日志", "消息": line})
+    return rows
 
 
 def _get_recent_log_files(limit=12):

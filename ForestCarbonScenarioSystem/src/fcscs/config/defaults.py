@@ -67,9 +67,10 @@ def sanitize_scenario_name(value, default="基准情景", max_length=80):
     return safe_name or str(default)
 
 
-def build_default_batch_name():
+def build_default_batch_name(scenario_name="运行批次"):
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    return "运行批次_" + timestamp
+    clean_scenario_name = sanitize_scenario_name(scenario_name, default="运行批次", max_length=42)
+    return sanitize_scenario_name(clean_scenario_name + "_" + timestamp, default="运行批次_" + timestamp)
 
 
 class ScenarioConfig:
@@ -139,8 +140,8 @@ class ScenarioConfig:
     ):
         self.scenario_name = sanitize_scenario_name(scenario_name)
         if batch_name is None:
-            batch_name = build_default_batch_name()
-        self.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name())
+            batch_name = build_default_batch_name(scenario_name)
+        self.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name(scenario_name))
         self.base_year = int(base_year)
         self.target_year = int(target_year)
         if future_years is None:

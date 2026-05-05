@@ -49,21 +49,26 @@ def render_sidebar():
         """,
         unsafe_allow_html=True,
     )
-    render_workbench_step_sidebar()
+    active_panel = st.session_state.get(SIDEBAR_PANEL_KEY, "workflow")
+    render_workbench_step_sidebar(active_panel)
 
     st.sidebar.divider()
     st.sidebar.markdown('<div class="sidebar-section-label">结果中心</div>', unsafe_allow_html=True)
-    result_button_type = "primary" if st.session_state.get(SIDEBAR_PANEL_KEY) == "results" else "secondary"
-    if st.sidebar.button("结果查看", type=result_button_type, use_container_width=True):
-        st.session_state[SIDEBAR_PANEL_KEY] = "results"
-        st.rerun()
+    if active_panel == "results":
+        st.sidebar.markdown('<div class="sidebar-nav-item active">结果查看</div>', unsafe_allow_html=True)
+    else:
+        if st.sidebar.button("结果查看", type="secondary", use_container_width=True):
+            st.session_state[SIDEBAR_PANEL_KEY] = "results"
+            st.rerun()
 
     st.sidebar.divider()
     st.sidebar.markdown('<div class="sidebar-section-label">运行记录</div>', unsafe_allow_html=True)
-    log_button_type = "primary" if st.session_state.get(SIDEBAR_PANEL_KEY) == "logs" else "secondary"
-    if st.sidebar.button("查看运行日志", type=log_button_type, use_container_width=True):
-        st.session_state[SIDEBAR_PANEL_KEY] = "logs"
-        st.rerun()
+    if active_panel == "logs":
+        st.sidebar.markdown('<div class="sidebar-nav-item active">查看运行日志</div>', unsafe_allow_html=True)
+    else:
+        if st.sidebar.button("查看运行日志", type="secondary", use_container_width=True):
+            st.session_state[SIDEBAR_PANEL_KEY] = "logs"
+            st.rerun()
 
     if st.session_state.get(SIDEBAR_PANEL_KEY) == "logs":
         render_run_log_page()

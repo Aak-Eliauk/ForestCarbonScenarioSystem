@@ -39,6 +39,7 @@ def start_background_run(config, run_mode, quick_size):
     config_path = batch_dir / "run_config.yaml"
     status_path = batch_dir / STATUS_FILE_NAME
     worker_log_path = log_dir / "worker_stdout.log"
+    run_log_path = log_dir / "run_events.log"
     run_config.save_yaml(config_path)
 
     write_status(
@@ -54,6 +55,7 @@ def start_background_run(config, run_mode, quick_size):
             "config_path": str(config_path),
             "batch_dir": str(batch_dir),
             "worker_log_path": str(worker_log_path),
+            "run_log_path": str(run_log_path),
         },
     )
 
@@ -96,6 +98,7 @@ def start_background_run(config, run_mode, quick_size):
         "config": run_config,
         "status_path": status_path,
         "batch_dir": batch_dir,
+        "run_log_path": run_log_path,
         "pid": int(process.pid),
     }
 
@@ -115,6 +118,34 @@ def write_status(status_path, status):
     with open(temp_path, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=2)
     temp_path.replace(status_path)
+    _append_run_log(data)
+
+
+def _append_run_log(status):
+    log_path_text = status.get("run_log_path")
+    if not log_path_text:
+        return
+
+    try:
+        log_path = Path(log_path_text)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        line = _build_log_line(status)
+        with open(log_path, "a", encoding="utf-8") as file:
+            file.write(line + "\n")
+            error_text = str(status.get("error", "")).strip()
+            if error_text:
+                file.write(error_text + "\n")
+    except Exception:
+        return
+
+
+def _build_log_line(status):
+    time_text = str(status.get("updated_at", ""))
+    state_text = str(status.get("state", ""))
+    percent_text = str(status.get("percent", ""))
+    stage_text = str(status.get("stage", ""))
+    message_text = str(status.get("message", ""))
+    return time_text + " | " + state_text + " | " + percent_text + "% | " + stage_text + " | " + message_text
 
 
 def read_status(status_path):

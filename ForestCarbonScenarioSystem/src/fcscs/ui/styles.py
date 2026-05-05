@@ -207,6 +207,29 @@ def apply_base_style():
             margin: 0 0 0.5rem 0;
         }
 
+        .sidebar-nav-item {
+            width: 100%;
+            min-height: 2.85rem;
+            border-radius: 8px;
+            border: 1px solid rgba(255, 250, 240, 0.2);
+            background: rgba(255, 250, 240, 0.1);
+            color: #fffaf0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 720;
+            padding: 0.65rem 0.8rem;
+            margin-bottom: 0.48rem;
+            text-align: center;
+        }
+
+        .sidebar-nav-item.active {
+            background: rgba(255, 250, 240, 0.96);
+            border-color: rgba(255, 250, 240, 0.96);
+            color: #163a2a;
+            box-shadow: 0 10px 24px rgba(10, 31, 22, 0.2);
+        }
+
         [data-testid="stSidebar"] div.stButton > button {
             min-height: 2.85rem;
             border-radius: 8px;
