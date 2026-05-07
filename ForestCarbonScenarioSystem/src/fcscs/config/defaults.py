@@ -103,7 +103,6 @@ class ScenarioConfig:
         ml_sample_count=3000,
         ml_n_estimators=60,
         ml_max_depth=10,
-        use_history_training=True,
         history_agbd_paths=None,
         history_tcc_paths=None,
         history_lulc_paths=None,
@@ -112,7 +111,6 @@ class ScenarioConfig:
         urban_probability_band=3,
         driver_probability_scale=250.0,
         severity_sample_count=4000,
-        use_raster_data=True,
         agbd_raster_path="../data/AGBD/Hubei_AGB_2022.tif",
         tcc_raster_path="../data/TCC/Hubei_TCC_2022.tif",
         lulc_base_raster_path="../data/LULC/Hubei_LULC_2022.tif",
@@ -171,7 +169,6 @@ class ScenarioConfig:
         self.ml_sample_count = int(ml_sample_count)
         self.ml_n_estimators = int(ml_n_estimators)
         self.ml_max_depth = int(ml_max_depth)
-        self.use_history_training = bool(use_history_training)
         if history_agbd_paths is None:
             history_agbd_paths = build_default_year_paths("AGBD", "Hubei_AGB")
         if history_tcc_paths is None:
@@ -186,7 +183,6 @@ class ScenarioConfig:
         self.urban_probability_band = int(urban_probability_band)
         self.driver_probability_scale = float(driver_probability_scale)
         self.severity_sample_count = int(severity_sample_count)
-        self.use_raster_data = bool(use_raster_data)
         self.agbd_raster_path = str(agbd_raster_path)
         self.tcc_raster_path = str(tcc_raster_path)
         self.lulc_base_raster_path = str(lulc_base_raster_path)
@@ -239,7 +235,6 @@ class ScenarioConfig:
             "ml_sample_count": self.ml_sample_count,
             "ml_n_estimators": self.ml_n_estimators,
             "ml_max_depth": self.ml_max_depth,
-            "use_history_training": self.use_history_training,
             "history_agbd_paths": self.history_agbd_paths,
             "history_tcc_paths": self.history_tcc_paths,
             "history_lulc_paths": self.history_lulc_paths,
@@ -248,7 +243,6 @@ class ScenarioConfig:
             "urban_probability_band": self.urban_probability_band,
             "driver_probability_scale": self.driver_probability_scale,
             "severity_sample_count": self.severity_sample_count,
-            "use_raster_data": self.use_raster_data,
             "agbd_raster_path": self.agbd_raster_path,
             "tcc_raster_path": self.tcc_raster_path,
             "lulc_base_raster_path": self.lulc_base_raster_path,

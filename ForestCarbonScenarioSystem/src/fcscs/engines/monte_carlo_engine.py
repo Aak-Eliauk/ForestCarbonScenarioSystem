@@ -22,6 +22,7 @@ class MonteCarloEngine:
     def run(self, event_tables, config):
         rng = np.random.default_rng(config.base_seed + 200)
         model_engine = AGBDModelEngine()
+        # 先用历史数据训练模型，再进入蒙特卡洛预测。
         model_context = model_engine.prepare_context(config, event_tables)
 
         baseline_agbd_surface = model_context["baseline_prediction_surface"]
@@ -46,6 +47,7 @@ class MonteCarloEngine:
     def _run_simulations(self, config, event_tables, model_context, rng):
         rows = config.grid_rows
         cols = config.grid_cols
+        # 每一层保存一次完整蒙特卡洛模拟的 AGBD 栅格。
         agbd_stack = np.zeros((config.mc_n_simulations, rows, cols), dtype=np.float32)
 
         for sim_index in range(config.mc_n_simulations):
@@ -346,6 +348,7 @@ class AGBDModelEngine:
         agbd_paths = parse_year_raster_paths(getattr(config, "history_agbd_paths", ""))
         tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
         lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
+        # 三类历史栅格必须有共同年份，后面才可以构造相邻年份样本。
         common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
             return None
@@ -383,6 +386,7 @@ class AGBDModelEngine:
         drivers_class = None
         drivers_loss_year = None
         if path_exists(getattr(config, "drivers_raster_path", "")):
+            # Drivers 概率波段用于提高高概率扰动样本的训练权重。
             drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
             if drivers_class.shape != reference_shape:
                 drivers_class = None
@@ -462,6 +466,7 @@ class AGBDModelEngine:
         return pd.DataFrame(rows)
 
     def _build_history_event_training_df(self, config, surfaces, history, event_type, rng):
+        # 事件模型只学习历史中发生过对应扰动的像元。
         rows = []
         year_pairs = self._build_history_year_pairs(history["years"])
         max_per_pair = max(20, int(config.ml_sample_count / max(len(year_pairs), 1)))

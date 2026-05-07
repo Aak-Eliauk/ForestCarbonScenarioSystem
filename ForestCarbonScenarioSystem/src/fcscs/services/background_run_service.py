@@ -14,6 +14,9 @@ from fcscs.services.quick_run_service import build_quick_config
 STATUS_FILE_NAME = "run_status.json"
 
 
+# 后台运行服务负责创建批次目录、启动子进程并记录状态。
+
+
 def get_batch_output_dir(config, create=True):
     batch_name = sanitize_scenario_name(getattr(config, "batch_name", config.scenario_name), default="运行批次")
     batch_dir = resolve_output_dir(config.output_dir) / batch_name
@@ -57,6 +60,7 @@ def start_background_run(config, run_mode, quick_size):
         },
     )
 
+    # 子进程需要能找到 src 目录下的 fcscs 包，所以这里补上 PYTHONPATH。
     project_root = Path(__file__).resolve().parents[3]
     src_dir = project_root / "src"
     env = os.environ.copy()
@@ -101,13 +105,8 @@ def start_background_run(config, run_mode, quick_size):
     }
 
 
-def _creation_flags():
-    if os.name == "nt":
-        return subprocess.CREATE_NO_WINDOW
-    return 0
-
-
 def write_status(status_path, status):
+    # 状态文件用于页面刷新后继续读取进度。
     status_path = Path(status_path)
     status_path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(status)
@@ -147,6 +146,7 @@ def _build_log_line(status):
 
 
 def read_status(status_path):
+    # 找不到或读坏状态文件时返回空字典，避免页面直接报错。
     status_path = Path(status_path)
     if not status_path.exists():
         return {}
@@ -158,6 +158,7 @@ def read_status(status_path):
 
 
 def find_recent_jobs(output_dir, limit=10):
+    # 输出目录下每个批次都有一个 run_status.json。
     output_dir = Path(output_dir)
     if not output_dir.exists():
         return []
@@ -176,6 +177,7 @@ def find_recent_jobs(output_dir, limit=10):
 
 
 def terminate_background_run(status_path):
+    # 终止时优先杀掉记录的进程号，再把状态写回文件。
     status_path = Path(status_path)
     status = read_status(status_path)
     if not status:
@@ -213,3 +215,9 @@ def terminate_background_run(status_path):
     status["message"] = "用户已终止本次后台运行。"
     write_status(status_path, status)
     return True, "后台任务已终止。"
+
+
+def _creation_flags():
+    if os.name == "nt":
+        return subprocess.CREATE_NO_WINDOW
+    return 0
