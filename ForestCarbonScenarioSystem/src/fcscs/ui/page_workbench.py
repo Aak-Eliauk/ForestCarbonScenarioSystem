@@ -891,7 +891,7 @@ def _get_recent_log_files(limit=12):
     output_dir = get_output_directory(config, create=False)
     log_files = []
     if output_dir.exists():
-        for path in output_dir.glob("*/run_logs/*.log"):
+        for path in output_dir.glob("*/run_logs/run_events.log"):
             if path.is_file():
                 log_files.append(path)
     return sorted(log_files, key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
@@ -992,8 +992,7 @@ def _raster_path_input(label, current_value, project_rasters, key, compact=False
     if pending_key in st.session_state:
         pending_value = str(st.session_state[pending_key]).strip()
         del st.session_state[pending_key]
-        if select_key in st.session_state:
-            del st.session_state[select_key]
+        st.session_state[select_key] = pending_value
 
     session_value = st.session_state.get(select_key, "")
     default_value = pending_value or session_value or current_value
@@ -1260,16 +1259,14 @@ def _render_extra_env_factor_row(row, project_rasters, index):
 
     if clear_key in st.session_state:
         if name_key in st.session_state:
-            del st.session_state[name_key]
-        if select_key in st.session_state:
-            del st.session_state[select_key]
+            st.session_state[name_key] = ""
+        st.session_state[select_key] = ""
         del st.session_state[clear_key]
         row = {"name": "", "path": ""}
     if pending_key in st.session_state:
         pending_value = str(st.session_state[pending_key]).strip()
         del st.session_state[pending_key]
-        if select_key in st.session_state:
-            del st.session_state[select_key]
+        st.session_state[select_key] = pending_value
 
     session_value = st.session_state.get(select_key, "")
     default_value = pending_value or session_value or row.get("path", "")
@@ -1358,8 +1355,7 @@ def _render_year_raster_row(row, project_rasters, key_prefix, index):
     if pending_key in st.session_state:
         pending_value = str(st.session_state[pending_key]).strip()
         del st.session_state[pending_key]
-        if select_key in st.session_state:
-            del st.session_state[select_key]
+        st.session_state[select_key] = pending_value
     session_value = st.session_state.get(select_key, "")
     default_value = pending_value or session_value or row.get("path", "")
     options = _build_path_options(default_value, project_rasters, session_value)

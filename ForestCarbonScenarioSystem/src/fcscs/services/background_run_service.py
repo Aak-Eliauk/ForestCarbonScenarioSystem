@@ -38,7 +38,6 @@ def start_background_run(config, run_mode, quick_size):
 
     config_path = batch_dir / "run_config.yaml"
     status_path = batch_dir / STATUS_FILE_NAME
-    worker_log_path = log_dir / "worker_stdout.log"
     run_log_path = log_dir / "run_events.log"
     run_config.save_yaml(config_path)
 
@@ -54,7 +53,6 @@ def start_background_run(config, run_mode, quick_size):
             "run_mode": run_mode,
             "config_path": str(config_path),
             "batch_dir": str(batch_dir),
-            "worker_log_path": str(worker_log_path),
             "run_log_path": str(run_log_path),
         },
     )
@@ -77,7 +75,7 @@ def start_background_run(config, run_mode, quick_size):
         str(run_mode),
     ]
 
-    log_file = open(worker_log_path, "a", encoding="utf-8")
+    log_file = open(run_log_path, "a", encoding="utf-8")
     process = subprocess.Popen(
         command,
         cwd=str(project_root),
