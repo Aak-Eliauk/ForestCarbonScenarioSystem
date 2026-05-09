@@ -112,8 +112,6 @@ class FullWorkflowTest(unittest.TestCase):
             ml_max_depth=6,
             severity_method=severity_method,
             base_seed=42,
-            use_raster_data=True,
-            use_history_training=True,
             agbd_raster_path=str(agbd_2022_path),
             tcc_raster_path=str(tcc_2022_path),
             lulc_base_raster_path=str(lulc_base_path),
@@ -173,25 +171,15 @@ class FullWorkflowTest(unittest.TestCase):
             ScenarioEngine().generate_all_events(config)
 
     def test_logging_generation_rejects_unplaceable_small_grid(self):
-        config = ScenarioConfig(
-            grid_rows=4,
-            grid_cols=4,
-            reserve_ratio=0.0,
-            logging_patch_min_size=20,
-            logging_patch_max_size=20,
-            logging_library_patch_count=5,
-            use_raster_data=False,
-        )
+        output_dir = self.get_test_output_dir() / "unplaceable_patch"
+        output_dir.mkdir(parents=True, exist_ok=True)
+        config = self.build_history_raster_config(output_dir, "S1")
+        config.logging_patch_min_size = 50
+        config.logging_patch_max_size = 50
+        config.logging_library_patch_count = 5
 
-        with self.assertRaisesRegex(ValueError, "演示网格模式已删除"):
+        with self.assertRaisesRegex(ValueError, "采伐事件生成失败"):
             ScenarioEngine().generate_all_events(config)
-
-    def test_zero_reserve_ratio_has_no_reserved_cells(self):
-        config = ScenarioConfig(grid_rows=8, grid_cols=8, reserve_ratio=0.0, use_raster_data=False)
-
-        reserve_mask = ScenarioEngine()._build_reserve_mask(config)
-
-        self.assertEqual(int(reserve_mask.sum()), 0)
 
     def test_urban_conv_severity_uses_conversion_floor(self):
         records = pd.DataFrame(
@@ -333,8 +321,6 @@ class FullWorkflowTest(unittest.TestCase):
             logging_patch_min_size=1,
             logging_patch_max_size=5,
             logging_library_patch_count=10,
-            use_raster_data=True,
-            use_history_training=True,
             use_driver_sample_weight=True,
             agbd_raster_path=str(agbd_2022_path),
             tcc_raster_path=str(tcc_2022_path),
@@ -380,8 +366,6 @@ class FullWorkflowTest(unittest.TestCase):
         self.write_test_raster(reserve_path, np.zeros((20, 20), dtype=np.uint8), "uint8", 255)
 
         config = ScenarioConfig(
-            use_raster_data=True,
-            use_history_training=False,
             agbd_raster_path=str(agbd_path),
             tcc_raster_path=str(tcc_path),
             lulc_base_raster_path=str(lulc_base_path),
@@ -406,8 +390,6 @@ class FullWorkflowTest(unittest.TestCase):
         self.write_test_raster(tcc_path, np.full((10, 10), 0.5, dtype=np.float32), "float32", nodata)
 
         config = ScenarioConfig(
-            use_raster_data=True,
-            use_history_training=False,
             agbd_raster_path=str(agbd_path),
             tcc_raster_path=str(tcc_path),
             env_raster_paths="",

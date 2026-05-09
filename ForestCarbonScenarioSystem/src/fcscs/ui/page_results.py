@@ -4,10 +4,9 @@ import pandas as pd
 import streamlit as st
 
 from fcscs.domain.models import ReportBundle
-from fcscs.ui.app_state import get_config, get_report_bundle, get_simulation_bundle
-from fcscs.ui.common import get_batch_output_directory, get_output_directory
+from fcscs.ui.app_state import get_config
+from fcscs.ui.common import get_output_directory
 from fcscs.ui.result_views import (
-    export_report,
     render_detail_tables,
     render_distribution_charts,
     render_output_files,
@@ -28,14 +27,10 @@ RASTER_FILE_KEYS = {
 def render_results_page():
     render_page_banner("结果查看", "查看当前模拟结果，也可以加载输出目录中已经保存的历史结果。")
 
-    current_report = get_report_bundle()
-    current_bundle = get_simulation_bundle()
     history_items = _discover_history_results()
     manual_item = _render_manual_result_picker()
 
     options = []
-    if current_report is not None:
-        options.append(("current", "当前会话结果：" + current_report.scenario_name, None))
     if manual_item is not None:
         options.append(("history", "手动打开：" + manual_item["label"], manual_item))
     for item in history_items:
@@ -52,12 +47,8 @@ def render_results_page():
     option_labels = [option[1] for option in options]
     selected_label = st.selectbox("结果来源", option_labels, key="result_source_select")
     selected_index = option_labels.index(selected_label)
-    source_type, _, item = options[selected_index]
-
-    if source_type == "current":
-        _render_current_result(current_report, current_bundle)
-    else:
-        _render_history_result(item)
+    _, _, item = options[selected_index]
+    _render_history_result(item)
 
 
 def _render_manual_result_picker():
@@ -84,17 +75,6 @@ def _render_manual_result_picker():
     return _build_manual_result_item(manual_path)
 
 
-def _render_current_result(report, bundle):
-    st.caption("来源：当前会话内存结果")
-    _render_result_tabs(report, bundle)
-
-    st.info("运行成功后系统会自动保存结果。下方按钮用于手动重新保存或覆盖同名历史报告。")
-    if st.button("重新保存当前结果", type="primary", use_container_width=True, key="save_current_report_history"):
-        export_dir = get_batch_output_directory(get_config()) / "report_exports"
-        export_report(report, export_dir)
-        st.success("结果已保存到：" + str(export_dir))
-
-
 def _render_history_result(item):
     report = _load_history_report(item)
     if report is None:
@@ -102,15 +82,15 @@ def _render_history_result(item):
         return
 
     st.caption("来源：" + str(item["path"]))
-    _render_result_tabs(report, None)
+    _render_result_tabs(report)
 
 
-def _render_result_tabs(report, bundle):
+def _render_result_tabs(report):
     overview_tab, map_tab, distribution_tab, output_tab, detail_tab = st.tabs(
         ["概览", "地图预览", "不确定性分布", "输出文件", "详细表格"]
     )
     with overview_tab:
-        render_result_overview(report, bundle)
+        render_result_overview(report)
     with map_tab:
         render_result_maps(report.output_files)
     with distribution_tab:

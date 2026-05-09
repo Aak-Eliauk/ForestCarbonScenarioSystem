@@ -32,6 +32,18 @@ WINDOWS_RESERVED_NAMES = {
 
 
 DEFAULT_HISTORY_YEARS = [2017, 2018, 2019, 2020, 2021, 2022]
+DEFAULT_ENV_RASTER_PATHS = (
+    "slope=../data/environmentFactors/地形/Hubei_Slope.tif\n"
+    "moisture=../data/environmentFactors/温度降水/Hubei_MAP_2000_2022.tif\n"
+    "accessibility=../data/欧氏距离/Hubei_Dist_RoadNet.tif\n"
+    "DEM=../data/environmentFactors/地形/Hubei_DEM.tif\n"
+    "TPI=../data/environmentFactors/地形/Hubei_TPI_100m.tif\n"
+    "MAT=../data/environmentFactors/温度降水/Hubei_MAT_2000_2022.tif\n"
+    "AET=../data/environmentFactors/温度降水/Hubei_Annual_AET_2000_2022.tif\n"
+    "Nightlight=../data/environmentFactors/社会经济/Hubei_Nightlight_2022.tif\n"
+    "PopDensity=../data/environmentFactors/社会经济/Hubei_Pop_Density_2020.tif\n"
+    "NPP=../data/Hubei_NPP_Mean_2000_2022.tif"
+)
 
 
 def build_default_year_paths(folder_name, file_prefix):
@@ -117,18 +129,7 @@ class ScenarioConfig:
         lulc_target_raster_path="../data/PLUS_predictions/BAUSimulation_1.tif",
         drivers_raster_path="../data/森林损失/Hubei_LossDriversAndYear_2001_2023.tif",
         reserve_raster_path="../data/自然保护区/Hubei_NatureReserve.tif",
-        env_raster_paths=(
-            "slope=../data/environmentFactors/地形/Hubei_Slope.tif\n"
-            "moisture=../data/environmentFactors/温度降水/Hubei_MAP_2000_2022.tif\n"
-            "accessibility=../data/欧氏距离/Hubei_Dist_RoadNet.tif\n"
-            "DEM=../data/environmentFactors/地形/Hubei_DEM.tif\n"
-            "TPI=../data/environmentFactors/地形/Hubei_TPI_100m.tif\n"
-            "MAT=../data/environmentFactors/温度降水/Hubei_MAT_2000_2022.tif\n"
-            "AET=../data/environmentFactors/温度降水/Hubei_Annual_AET_2000_2022.tif\n"
-            "Nightlight=../data/environmentFactors/社会经济/Hubei_Nightlight_2022.tif\n"
-            "PopDensity=../data/environmentFactors/社会经济/Hubei_Pop_Density_2020.tif\n"
-            "NPP=../data/Hubei_NPP_Mean_2000_2022.tif"
-        ),
+        env_raster_paths=DEFAULT_ENV_RASTER_PATHS,
         forest_lulc_codes="4,5,6",
         urban_lulc_codes="13",
         logging_driver_value=4,
@@ -136,6 +137,7 @@ class ScenarioConfig:
         write_raster_outputs=True,
         output_dir="../ForestCarbonScenarioSystem_outputs",
     ):
+        # 基本信息和年份范围。
         self.scenario_name = sanitize_scenario_name(scenario_name)
         if batch_name is None:
             batch_name = build_default_batch_name(scenario_name)
@@ -147,6 +149,7 @@ class ScenarioConfig:
         else:
             self.future_years = [int(year) for year in future_years]
 
+        # 情景控制和蒙特卡洛参数。
         self.logging_area_reduction = float(logging_area_reduction)
         self.logging_severity_reduction = float(logging_severity_reduction)
         self.logging_severity_cap_quantile = logging_severity_cap_quantile
@@ -169,6 +172,8 @@ class ScenarioConfig:
         self.ml_sample_count = int(ml_sample_count)
         self.ml_n_estimators = int(ml_n_estimators)
         self.ml_max_depth = int(ml_max_depth)
+
+        # 历史栅格默认按年份连续填写。
         if history_agbd_paths is None:
             history_agbd_paths = build_default_year_paths("AGBD", "Hubei_AGB")
         if history_tcc_paths is None:
@@ -183,6 +188,8 @@ class ScenarioConfig:
         self.urban_probability_band = int(urban_probability_band)
         self.driver_probability_scale = float(driver_probability_scale)
         self.severity_sample_count = int(severity_sample_count)
+
+        # 栅格路径和分类编码。
         self.agbd_raster_path = str(agbd_raster_path)
         self.tcc_raster_path = str(tcc_raster_path)
         self.lulc_base_raster_path = str(lulc_base_raster_path)
@@ -343,37 +350,3 @@ def build_preset_config(preset_name):
         )
 
     return ScenarioConfig()
-
-
-class DataCatalog:
-    def __init__(
-        self,
-        agbd_path="data/baseline/agbd_2022.tif",
-        tcc_path="data/baseline/tcc_2022.tif",
-        lulc_path="data/baseline/lulc_2022.tif",
-        drivers_path="data/drivers/drivers_classification.tif",
-        reserve_path="data/drivers/nature_reserve.tif",
-        static_env_dir="data/env",
-        outputs_dir="../ForestCarbonScenarioSystem_outputs",
-        models_dir="models",
-    ):
-        self.agbd_path = agbd_path
-        self.tcc_path = tcc_path
-        self.lulc_path = lulc_path
-        self.drivers_path = drivers_path
-        self.reserve_path = reserve_path
-        self.static_env_dir = static_env_dir
-        self.outputs_dir = outputs_dir
-        self.models_dir = models_dir
-
-    def to_dict(self):
-        return {
-            "agbd_path": self.agbd_path,
-            "tcc_path": self.tcc_path,
-            "lulc_path": self.lulc_path,
-            "drivers_path": self.drivers_path,
-            "reserve_path": self.reserve_path,
-            "static_env_dir": self.static_env_dir,
-            "outputs_dir": self.outputs_dir,
-            "models_dir": self.models_dir,
-        }

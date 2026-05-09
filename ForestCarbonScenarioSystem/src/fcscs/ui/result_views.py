@@ -33,8 +33,8 @@ OVERVIEW_METRIC_LABELS = {
 CHINESE_OVERVIEW_KEYS = ["平均AGBD", "平均AGC", "总AGBD", "总AGC", "平均损失强度", "模型R2", "模型MAE"]
 
 
-def render_result_overview(report, bundle=None):
-    metrics = _build_metric_items(report, bundle)
+def render_result_overview(report):
+    metrics = _build_metric_items(report)
     if metrics:
         columns = st.columns(min(4, len(metrics)))
         for index, (label, value) in enumerate(metrics):
@@ -198,15 +198,7 @@ def export_report(report, export_dir):
         pd.DataFrame(raster_rows).to_csv(export_dir / "raster_outputs.csv", index=False, encoding="utf-8-sig")
 
 
-def _build_metric_items(report, bundle):
-    if bundle is not None:
-        return [
-            ("平均 AGBD", round(bundle.summary["mean_agbd_per_ha"], 3)),
-            ("平均 AGC", round(bundle.summary["mean_agc_per_ha"], 3)),
-            ("模型 R2", round(bundle.summary["mean_model_r2"], 4)),
-            ("模拟次数", bundle.summary["n_simulations"]),
-        ]
-
+def _build_metric_items(report):
     if not report.metrics:
         return []
 

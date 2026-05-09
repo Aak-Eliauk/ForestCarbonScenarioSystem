@@ -1,5 +1,3 @@
-import math
-
 import numpy as np
 import pandas as pd
 
@@ -25,12 +23,10 @@ class ScenarioEngine:
 
     def generate_all_events(self, config):
         self._check_config(config)
-        if not config.use_raster_data:
-            raise ValueError("演示网格模式已删除，请使用真实栅格数据运行系统。")
         return self._generate_all_events_from_rasters(config)
 
     def _generate_all_events_from_rasters(self, config):
-        # 读取基准年和目标年 LULC 后，先判断森林、城镇和保护区范围。
+        # 读取基准年和目标年LULC后，先判断森林、城镇和保护区范围。
         self._check_raster_config(config)
         rng = np.random.default_rng(config.base_seed)
 
@@ -94,23 +90,17 @@ class ScenarioEngine:
         validate_raster_alignment(required_items + optional_items, "真实栅格模式")
 
     def _build_raster_reserve_mask(self, config, shape):
-        if path_exists(config.reserve_raster_path):
-            reserve, _ = read_raster(config.reserve_raster_path)
-            if reserve.shape != shape:
-                raise ValueError("保护区栅格尺寸必须和 LULC 栅格一致。")
-            return reserve == config.reserve_value
-
-        return np.zeros(shape, dtype=bool)
+        reserve, _ = read_raster(config.reserve_raster_path)
+        if reserve.shape != shape:
+            raise ValueError("保护区栅格尺寸必须和 LULC 栅格一致。")
+        return reserve == config.reserve_value
 
     def _generate_raster_logging_events(self, config, rng, forest_target, reserve_mask):
-        # Drivers 确定采伐候选区，采伐斑块库从这些区域中提取。
-        if path_exists(config.drivers_raster_path):
-            drivers, _ = read_raster(config.drivers_raster_path)
-            if drivers.shape != forest_target.shape:
-                raise ValueError("Drivers 栅格尺寸必须和 LULC 栅格一致。")
-            logging_source = drivers == config.logging_driver_value
-        else:
-            logging_source = forest_target.copy()
+        # Drivers确定采伐候选区，采伐斑块库从这些区域中提取。
+        drivers, _ = read_raster(config.drivers_raster_path)
+        if drivers.shape != forest_target.shape:
+            raise ValueError("Drivers 栅格尺寸必须和 LULC 栅格一致。")
+        logging_source = drivers == config.logging_driver_value
 
         potential_mask = logging_source & forest_target & (~reserve_mask)
         target_count = int(potential_mask.sum() * (1 - config.logging_area_reduction))
@@ -224,47 +214,6 @@ class ScenarioEngine:
 
     def _empty_event_frame(self):
         return pd.DataFrame(columns=["pixel_id", "row", "col", "type", "y_event"])
-
-    def _build_reserve_mask(self, config):
-        mask = np.zeros((config.grid_rows, config.grid_cols), dtype=bool)
-        reserve_ratio = config.reserve_ratio
-        if reserve_ratio <= 0:
-            return mask
-        reserve_edge_ratio = math.sqrt(reserve_ratio)
-        reserve_rows = int(config.grid_rows * reserve_edge_ratio)
-        reserve_cols = int(config.grid_cols * reserve_edge_ratio)
-
-        if reserve_rows < 1:
-            reserve_rows = 1
-        if reserve_cols < 1:
-            reserve_cols = 1
-
-        row = 0
-        while row < reserve_rows:
-            col = 0
-            while col < reserve_cols:
-                mask[row, col] = True
-                col += 1
-            row += 1
-
-        right_rows = reserve_rows // 2
-        right_cols = reserve_cols // 2
-        if right_rows < 1:
-            right_rows = 1
-        if right_cols < 1:
-            right_cols = 1
-
-        start_row = config.grid_rows - right_rows
-        start_col = config.grid_cols - right_cols
-        row = start_row
-        while row < config.grid_rows:
-            col = start_col
-            while col < config.grid_cols:
-                mask[row, col] = True
-                col += 1
-            row += 1
-
-        return mask
 
     def _build_pixel_id_set(self, records):
         pixel_ids = set()
@@ -541,21 +490,6 @@ class LoggingPatchLibrary:
             "size_max": max(sizes),
         }
 
-    def to_frame(self):
-        rows = []
-        for patch in self.patches:
-            rows.append(
-                {
-                    "patch_id": patch.patch_id,
-                    "source_year": patch.source_year,
-                    "size": patch.size,
-                    "row_offsets": str(patch.row_offsets),
-                    "col_offsets": str(patch.col_offsets),
-                }
-            )
-        return pd.DataFrame(rows)
-
-
 class RasterLoggingPatchLibrary(LoggingPatchLibrary):
     def build_from_mask(self, potential_mask, config):
         self.patches = []
@@ -666,12 +600,10 @@ class SeverityEngine:
         return EventTable(event_table.event_type, records)
 
     def _build_severity(self, records, event_type, config):
-        if getattr(config, "use_history_training", False) and getattr(config, "use_raster_data", False):
-            values = self._sample_empirical_severity(records, event_type, config)
-            if values is not None:
-                return values
-            raise ValueError("历史扰动强度样本为空：请检查历史TCC、Drivers、历史土地利用和环境因子栅格。")
-        raise ValueError("简化随机扰动强度已删除，请使用历史数据计算经验强度分布。")
+        values = self._sample_empirical_severity(records, event_type, config)
+        if values is not None:
+            return values
+        raise ValueError("历史扰动强度样本为空：请检查历史TCC、Drivers、历史土地利用和环境因子栅格。")
 
     def _sample_empirical_severity(self, records, event_type, config):
         distribution = self._build_empirical_distribution(event_type, config)
@@ -681,7 +613,7 @@ class SeverityEngine:
         rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type))
         future_features = self._build_future_severity_features(records, config)
         picked = self._sample_by_strata(distribution, future_features, rng)
-        if str(getattr(config, "severity_method", "S1")).upper() == "S2":
+        if str(config.severity_method).upper() == "S2":
             picked = self._adjust_severity_by_environment(picked, future_features)
         if event_type in {"urban_conv", "urban_conversion"}:
             picked = np.maximum(picked, 0.62)
@@ -689,15 +621,15 @@ class SeverityEngine:
             picked = picked * (1.0 - float(config.urban_severity_reduction))
         if event_type == "logging":
             picked = picked * (1.0 - float(config.logging_severity_reduction))
-            cap_quantile = getattr(config, "logging_severity_cap_quantile", None)
+            cap_quantile = config.logging_severity_cap_quantile
             if cap_quantile is not None:
                 cap_value = float(np.quantile(distribution["Severity"].to_numpy(dtype=np.float32), float(cap_quantile)))
                 picked = np.minimum(picked, cap_value)
         return np.clip(picked, 0.0, 0.95)
 
     def _build_empirical_distribution(self, event_type, config):
-        tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
-        lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
+        tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
+        lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
         years = sorted(set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(years) < 2:
             return None
@@ -706,20 +638,10 @@ class SeverityEngine:
         forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
         urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
         samples = []
-        max_samples = max(200, int(getattr(config, "severity_sample_count", 4000)))
-
-        drivers_class = None
-        drivers_loss_year = None
-        if event_type == "logging" and path_exists(getattr(config, "drivers_raster_path", "")):
-            try:
-                drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
-                drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
-            except Exception:
-                drivers_class = None
-                drivers_loss_year = None
+        max_samples = max(200, int(config.severity_sample_count))
+        drivers_class, drivers_loss_year = self._read_logging_driver_layers(event_type, config)
 
         env_surfaces = None
-
         for index in range(len(years) - 1):
             start_year = years[index]
             end_year = years[index + 1]
@@ -736,47 +658,31 @@ class SeverityEngine:
                 env_surfaces = self._load_severity_env_surfaces(config, tcc_start.shape)
 
             if event_type == "logging":
-                if drivers_class is None or drivers_class.shape != tcc_start.shape:
+                mask = self._build_logging_history_mask(
+                    mask,
+                    drivers_class,
+                    drivers_loss_year,
+                    tcc_start.shape,
+                    end_year,
+                    config,
+                )
+                if mask is None:
                     continue
-                mask = mask & (drivers_class == int(config.logging_driver_value))
-                if drivers_loss_year is not None and drivers_loss_year.shape == tcc_start.shape:
-                    encoded_year = drivers_loss_year.astype(np.int32) + 2000
-                    mask = mask & (encoded_year == int(end_year))
             else:
-                if start_year not in lulc_paths or end_year not in lulc_paths:
+                mask = self._build_urban_history_mask(
+                    mask,
+                    lulc_paths,
+                    start_year,
+                    end_year,
+                    tcc_start.shape,
+                    event_type,
+                    forest_codes,
+                    urban_codes,
+                )
+                if mask is None:
                     continue
-                if not path_exists(lulc_paths[start_year]) or not path_exists(lulc_paths[end_year]):
-                    continue
-                lulc_start, _ = read_raster(lulc_paths[start_year])
-                lulc_end, _ = read_raster(lulc_paths[end_year])
-                if lulc_start.shape != tcc_start.shape or lulc_end.shape != tcc_start.shape:
-                    continue
-                conv_mask = np.isin(lulc_start, forest_codes) & np.isin(lulc_end, urban_codes)
-                if event_type in {"urban_conv", "urban_conversion"}:
-                    mask = mask & conv_mask
-                else:
-                    edge_mask = self._build_edge_mask(conv_mask, np.isin(lulc_end, forest_codes))
-                    mask = mask & edge_mask
 
-            row_ids, col_ids = np.where(mask)
-            if len(row_ids) == 0:
-                continue
-            keep_count = min(len(row_ids), max_samples - len(samples))
-            if keep_count <= 0:
-                break
-            picked = rng.choice(len(row_ids), size=keep_count, replace=False)
-            for picked_index in picked:
-                row = int(row_ids[picked_index])
-                col = int(col_ids[picked_index])
-                severity = self._calculate_severity_value(tcc_start[row, col], tcc_end[row, col])
-                if severity <= 0:
-                    continue
-                item = {
-                    "Severity": severity,
-                    "TCC_pre": float(tcc_start[row, col]),
-                }
-                self._add_env_value_to_severity_item(item, env_surfaces, row, col)
-                samples.append(item)
+            self._append_history_severity_samples(samples, mask, tcc_start, tcc_end, env_surfaces, rng, max_samples)
             if len(samples) >= max_samples:
                 break
 
@@ -784,8 +690,67 @@ class SeverityEngine:
             return None
         return pd.DataFrame(samples)
 
+    def _read_logging_driver_layers(self, event_type, config):
+        if event_type != "logging":
+            return None, None
+        try:
+            drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
+            drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
+            return drivers_class, drivers_loss_year
+        except Exception as error:
+            raise ValueError("Drivers栅格需要包含分类波段和loss year波段：" + str(error))
+
+    def _build_logging_history_mask(self, mask, drivers_class, drivers_loss_year, raster_shape, end_year, config):
+        if drivers_class is None or drivers_class.shape != raster_shape:
+            return None
+        mask = mask & (drivers_class == int(config.logging_driver_value))
+        if drivers_loss_year is not None and drivers_loss_year.shape == raster_shape:
+            encoded_year = drivers_loss_year.astype(np.int32) + 2000
+            mask = mask & (encoded_year == int(end_year))
+        return mask
+
+    def _build_urban_history_mask(self, mask, lulc_paths, start_year, end_year, raster_shape, event_type, forest_codes, urban_codes):
+        if start_year not in lulc_paths or end_year not in lulc_paths:
+            return None
+        if not path_exists(lulc_paths[start_year]) or not path_exists(lulc_paths[end_year]):
+            return None
+        lulc_start, _ = read_raster(lulc_paths[start_year])
+        lulc_end, _ = read_raster(lulc_paths[end_year])
+        if lulc_start.shape != raster_shape or lulc_end.shape != raster_shape:
+            return None
+
+        conv_mask = np.isin(lulc_start, forest_codes) & np.isin(lulc_end, urban_codes)
+        if event_type in {"urban_conv", "urban_conversion"}:
+            return mask & conv_mask
+
+        edge_mask = self._build_edge_mask(conv_mask, np.isin(lulc_end, forest_codes))
+        return mask & edge_mask
+
+    def _append_history_severity_samples(self, samples, mask, tcc_start, tcc_end, env_surfaces, rng, max_samples):
+        row_ids, col_ids = np.where(mask)
+        if len(row_ids) == 0:
+            return
+
+        keep_count = min(len(row_ids), max_samples - len(samples))
+        if keep_count <= 0:
+            return
+
+        picked = rng.choice(len(row_ids), size=keep_count, replace=False)
+        for picked_index in picked:
+            row = int(row_ids[picked_index])
+            col = int(col_ids[picked_index])
+            severity = self._calculate_severity_value(tcc_start[row, col], tcc_end[row, col])
+            if severity <= 0:
+                continue
+            item = {
+                "Severity": severity,
+                "TCC_pre": float(tcc_start[row, col]),
+            }
+            self._add_env_value_to_severity_item(item, env_surfaces, row, col)
+            samples.append(item)
+
     def _load_severity_env_surfaces(self, config, shape):
-        env_items = parse_env_raster_paths(getattr(config, "env_raster_paths", ""))
+        env_items = parse_env_raster_paths(config.env_raster_paths)
         env_map = {}
         for name, path_text in env_items:
             if not path_exists(path_text):

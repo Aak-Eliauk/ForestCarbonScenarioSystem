@@ -10,13 +10,7 @@ from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster
 from fcscs.services.background_run_service import find_recent_jobs, read_status, start_background_run, terminate_background_run
 from fcscs.ui.app_state import (
     get_config,
-    get_report_bundle,
-    get_simulation_bundle,
     set_config,
-    set_events,
-    set_logging_patch_library,
-    set_report_bundle,
-    set_simulation_bundle,
 )
 from fcscs.ui.common import get_batch_output_directory, get_output_directory
 from fcscs.ui.styles import render_page_banner
@@ -69,11 +63,7 @@ def _ensure_wizard_state():
     if WIZARD_STEP_KEY not in st.session_state:
         st.session_state[WIZARD_STEP_KEY] = 0
 
-    try:
-        current = int(st.session_state[WIZARD_STEP_KEY])
-    except Exception:
-        current = 0
-
+    current = int(st.session_state[WIZARD_STEP_KEY])
     if current < 0 or current >= len(WIZARD_STEPS):
         current = 0
     st.session_state[WIZARD_STEP_KEY] = current
@@ -136,11 +126,6 @@ def render_run_log_page():
     _render_recent_log_files(recent_log_files)
 
 
-def render_run_status_page():
-    render_page_banner("运行状态", "查看后台批次进度、终止正在运行的任务，并切换不同批次的状态记录。")
-    _render_run_status_content(get_config())
-
-
 def _render_run_status_content(config):
     c_back, c_result = st.columns([1, 1])
     with c_back:
@@ -156,14 +141,9 @@ def _render_run_status_content(config):
     _render_run_status_live_area()
 
 
-if hasattr(st, "fragment"):
-    @st.fragment(run_every="5s")
-    def _render_run_status_live_area():
-        _render_run_status_live_content()
-else:
-    def _render_run_status_live_area():
-        _render_run_status_live_content()
-        st.caption("当前 Streamlit 版本不支持局部定时刷新，可点击页面按钮或切换批次后刷新状态。")
+@st.fragment(run_every="5s")
+def _render_run_status_live_area():
+    _render_run_status_live_content()
 
 
 def _render_run_status_live_content():
@@ -184,8 +164,8 @@ def _build_step_labels(config):
     scenario_ok = _scenario_ready(config)
     current_step = int(st.session_state[WIZARD_STEP_KEY])
     active_status = _get_active_background_status(config)
-    run_ok = bool(active_status) or get_report_bundle() is not None
-    status_ok = _background_finished(active_status) or get_report_bundle() is not None
+    run_ok = bool(active_status)
+    status_ok = _background_finished(active_status)
     completed = [data_ok, scenario_ok, run_ok, status_ok]
 
     labels = []
@@ -201,7 +181,6 @@ def _build_step_labels(config):
 
 
 def _render_data_step(current):
-    use_raster_data = True
     output_dir = _folder_path_input("输出文件夹", current.output_dir, "wizard_output_dir")
     project_rasters = _find_project_rasters()
 
@@ -233,7 +212,6 @@ def _render_data_step(current):
 
     _render_section_title("历史训练数据", "连续年份树冠覆盖度用于量化森林损失强度，并用森林损失驱动因素数据定位采伐发生位置。")
     with st.expander("历史训练数据输入", expanded=True):
-        use_history_training = True
         st.caption("至少需要两组相同年份的历史森林地上生物量密度、树冠覆盖度和土地利用栅格，系统会按相邻年份构造训练样本。")
         history_row_count = _history_row_count_input(current)
         history_agbd_paths = _render_year_raster_form(
@@ -274,9 +252,6 @@ def _render_data_step(current):
             reserve_value = st.number_input("自然保护区编码", value=current.reserve_value, step=1, key="wizard_reserve_value")
         write_raster_outputs = st.checkbox("输出 GeoTIFF 栅格结果", value=current.write_raster_outputs, key="wizard_write_tif")
 
-    grid_rows = current.grid_rows
-    grid_cols = current.grid_cols
-
     c_back, c_save = st.columns([1, 2])
     with c_back:
         if st.button("重置为当前配置", use_container_width=True, key="wizard_data_reset"):
@@ -304,29 +279,65 @@ def _render_data_step(current):
                 return
 
             new_config = current.copy()
-            new_config.use_raster_data = True
-            new_config.agbd_raster_path = agbd_raster_path
-            new_config.tcc_raster_path = tcc_raster_path
-            new_config.lulc_base_raster_path = lulc_base_raster_path
-            new_config.lulc_target_raster_path = lulc_target_raster_path
-            new_config.drivers_raster_path = drivers_raster_path
-            new_config.reserve_raster_path = reserve_raster_path
-            new_config.env_raster_paths = env_raster_paths
-            new_config.use_history_training = bool(use_history_training)
-            new_config.history_agbd_paths = history_agbd_paths
-            new_config.history_tcc_paths = history_tcc_paths
-            new_config.history_lulc_paths = history_lulc_paths
-            new_config.forest_lulc_codes = forest_lulc_codes
-            new_config.urban_lulc_codes = urban_lulc_codes
-            new_config.logging_driver_value = int(logging_driver_value)
-            new_config.reserve_value = int(reserve_value)
-            new_config.write_raster_outputs = bool(write_raster_outputs)
-            new_config.output_dir = output_dir
-            new_config.grid_rows = int(grid_rows)
-            new_config.grid_cols = int(grid_cols)
+            _fill_data_config(
+                new_config,
+                output_dir,
+                agbd_raster_path,
+                tcc_raster_path,
+                lulc_base_raster_path,
+                lulc_target_raster_path,
+                drivers_raster_path,
+                reserve_raster_path,
+                env_raster_paths,
+                history_agbd_paths,
+                history_tcc_paths,
+                history_lulc_paths,
+                forest_lulc_codes,
+                urban_lulc_codes,
+                logging_driver_value,
+                reserve_value,
+                write_raster_outputs,
+            )
 
             _save_and_clear(new_config)
             _go_to_step(1)
+
+
+def _fill_data_config(
+    config,
+    output_dir,
+    agbd_raster_path,
+    tcc_raster_path,
+    lulc_base_raster_path,
+    lulc_target_raster_path,
+    drivers_raster_path,
+    reserve_raster_path,
+    env_raster_paths,
+    history_agbd_paths,
+    history_tcc_paths,
+    history_lulc_paths,
+    forest_lulc_codes,
+    urban_lulc_codes,
+    logging_driver_value,
+    reserve_value,
+    write_raster_outputs,
+):
+    config.agbd_raster_path = agbd_raster_path
+    config.tcc_raster_path = tcc_raster_path
+    config.lulc_base_raster_path = lulc_base_raster_path
+    config.lulc_target_raster_path = lulc_target_raster_path
+    config.drivers_raster_path = drivers_raster_path
+    config.reserve_raster_path = reserve_raster_path
+    config.env_raster_paths = env_raster_paths
+    config.history_agbd_paths = history_agbd_paths
+    config.history_tcc_paths = history_tcc_paths
+    config.history_lulc_paths = history_lulc_paths
+    config.forest_lulc_codes = forest_lulc_codes
+    config.urban_lulc_codes = urban_lulc_codes
+    config.logging_driver_value = int(logging_driver_value)
+    config.reserve_value = int(reserve_value)
+    config.write_raster_outputs = bool(write_raster_outputs)
+    config.output_dir = output_dir
 
 
 def _render_scenario_step(current):
@@ -444,36 +455,96 @@ def _render_scenario_step(current):
                 return
 
             new_config = current.copy()
-            new_config.scenario_name = sanitize_scenario_name(scenario_name)
-            new_config.base_year = int(base_year)
-            new_config.target_year = int(target_year)
-            new_config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
-            new_config.logging_area_reduction = float(logging_area_reduction)
-            new_config.logging_severity_reduction = float(logging_severity_reduction)
-            new_config.logging_severity_cap_quantile = float(logging_cap)
-            new_config.urban_area_reduction = float(urban_area_reduction)
-            new_config.urban_speed_shift = float(urban_speed_shift)
-            new_config.urban_severity_reduction = float(urban_severity_reduction)
-            new_config.logging_patch_min_size = int(logging_patch_min_size)
-            new_config.logging_patch_max_size = int(logging_patch_max_size)
-            new_config.logging_library_years = int(logging_library_years)
-            new_config.logging_library_patch_count = int(logging_library_patch_count)
-            new_config.mc_n_simulations = int(mc_n_simulations)
-            new_config.ml_sample_count = int(ml_sample_count)
-            new_config.ml_n_estimators = int(ml_n_estimators)
-            new_config.ml_max_depth = int(ml_max_depth)
-            new_config.agbd_to_agc_factor = float(agbd_to_agc_factor)
-            new_config.pixel_area_ha = float(pixel_area_ha)
-            new_config.severity_method = severity_method
-            new_config.base_seed = int(base_seed)
-            new_config.use_driver_sample_weight = bool(use_driver_sample_weight)
-            new_config.logging_probability_band = int(logging_probability_band)
-            new_config.urban_probability_band = int(urban_probability_band)
-            new_config.driver_probability_scale = float(driver_probability_scale)
-            new_config.severity_sample_count = int(severity_sample_count)
+            _fill_scenario_config(
+                new_config,
+                scenario_name,
+                base_year,
+                target_year,
+                logging_area_reduction,
+                logging_severity_reduction,
+                logging_cap,
+                urban_area_reduction,
+                urban_speed_shift,
+                urban_severity_reduction,
+                logging_patch_min_size,
+                logging_patch_max_size,
+                logging_library_years,
+                logging_library_patch_count,
+                mc_n_simulations,
+                ml_sample_count,
+                ml_n_estimators,
+                ml_max_depth,
+                agbd_to_agc_factor,
+                pixel_area_ha,
+                severity_method,
+                base_seed,
+                use_driver_sample_weight,
+                logging_probability_band,
+                urban_probability_band,
+                driver_probability_scale,
+                severity_sample_count,
+            )
 
             _save_and_clear(new_config)
             _go_to_step(2)
+
+
+def _fill_scenario_config(
+    config,
+    scenario_name,
+    base_year,
+    target_year,
+    logging_area_reduction,
+    logging_severity_reduction,
+    logging_cap,
+    urban_area_reduction,
+    urban_speed_shift,
+    urban_severity_reduction,
+    logging_patch_min_size,
+    logging_patch_max_size,
+    logging_library_years,
+    logging_library_patch_count,
+    mc_n_simulations,
+    ml_sample_count,
+    ml_n_estimators,
+    ml_max_depth,
+    agbd_to_agc_factor,
+    pixel_area_ha,
+    severity_method,
+    base_seed,
+    use_driver_sample_weight,
+    logging_probability_band,
+    urban_probability_band,
+    driver_probability_scale,
+    severity_sample_count,
+):
+    config.scenario_name = sanitize_scenario_name(scenario_name)
+    config.base_year = int(base_year)
+    config.target_year = int(target_year)
+    config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
+    config.logging_area_reduction = float(logging_area_reduction)
+    config.logging_severity_reduction = float(logging_severity_reduction)
+    config.logging_severity_cap_quantile = float(logging_cap)
+    config.urban_area_reduction = float(urban_area_reduction)
+    config.urban_speed_shift = float(urban_speed_shift)
+    config.urban_severity_reduction = float(urban_severity_reduction)
+    config.logging_patch_min_size = int(logging_patch_min_size)
+    config.logging_patch_max_size = int(logging_patch_max_size)
+    config.logging_library_years = int(logging_library_years)
+    config.logging_library_patch_count = int(logging_library_patch_count)
+    config.mc_n_simulations = int(mc_n_simulations)
+    config.ml_sample_count = int(ml_sample_count)
+    config.ml_n_estimators = int(ml_n_estimators)
+    config.ml_max_depth = int(ml_max_depth)
+    config.agbd_to_agc_factor = float(agbd_to_agc_factor)
+    config.pixel_area_ha = float(pixel_area_ha)
+    config.severity_method = severity_method
+    config.base_seed = int(base_seed)
+    config.use_driver_sample_weight = bool(use_driver_sample_weight)
+    config.logging_probability_band = int(logging_probability_band)
+    config.urban_probability_band = int(urban_probability_band)
+    config.driver_probability_scale = float(driver_probability_scale)
+    config.severity_sample_count = int(severity_sample_count)
 
 
 def _find_preset_index(scenario_name, preset_names):
@@ -490,7 +561,25 @@ def _apply_selected_preset():
     preset_name = st.session_state.get("wizard_preset", "基准情景")
     current = get_config()
     preset_config = build_preset_config(preset_name)
-    _copy_data_settings(current, preset_config)
+    preset_config.agbd_raster_path = current.agbd_raster_path
+    preset_config.tcc_raster_path = current.tcc_raster_path
+    preset_config.lulc_base_raster_path = current.lulc_base_raster_path
+    preset_config.lulc_target_raster_path = current.lulc_target_raster_path
+    preset_config.drivers_raster_path = current.drivers_raster_path
+    preset_config.reserve_raster_path = current.reserve_raster_path
+    preset_config.env_raster_paths = current.env_raster_paths
+    preset_config.history_agbd_paths = current.history_agbd_paths
+    preset_config.history_tcc_paths = current.history_tcc_paths
+    preset_config.history_lulc_paths = current.history_lulc_paths
+    preset_config.forest_lulc_codes = current.forest_lulc_codes
+    preset_config.urban_lulc_codes = current.urban_lulc_codes
+    preset_config.logging_driver_value = current.logging_driver_value
+    preset_config.reserve_value = current.reserve_value
+    preset_config.write_raster_outputs = current.write_raster_outputs
+    preset_config.output_dir = current.output_dir
+    preset_config.batch_name = current.batch_name
+    preset_config.grid_rows = current.grid_rows
+    preset_config.grid_cols = current.grid_cols
     _save_and_clear(preset_config)
 
 
@@ -525,7 +614,7 @@ def _render_run_step(config):
         key="wizard_run_mode",
     )
     quick_size = 520
-    if run_mode == "快速测试" and config.use_raster_data:
+    if run_mode == "快速测试":
         quick_size = st.number_input("测试窗口大小", min_value=128, max_value=1200, value=520, step=64, key="wizard_quick_size")
     if run_mode == "快速测试":
         effective_mc = min(int(config.mc_n_simulations), 3)
@@ -619,11 +708,6 @@ def _render_progress_area(active_status=None):
         progress_value = int(active_status.get("percent", progress_value))
         stage = str(active_status.get("stage", stage))
         message = str(active_status.get("message", message))
-
-    if get_report_bundle() is not None and progress_value < 100:
-        progress_value = 100
-        stage = "完成"
-        message = "运行已完成。"
 
     st.markdown("**运行进度**")
     progress_bar = st.progress(progress_value, text=f"{progress_value}% {stage}")
@@ -939,16 +1023,12 @@ def _render_recent_log_files(log_files):
 
 def _build_preflight_rows(config):
     rows = []
-    rows.append(_check_row("数据配置", _data_ready(config), "必填数据已配置"))
-    rows.append(_check_row("情景年份", _scenario_ready(config), f"{config.base_year} 到 {config.target_year}"))
-    rows.append(_check_row("输出目录", _output_dir_ready(config), getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")))
+    rows.append({"检查项": "数据配置", "状态": "通过" if _data_ready(config) else "未通过", "说明": "必填数据已配置"})
+    rows.append({"检查项": "情景年份", "状态": "通过" if _scenario_ready(config) else "未通过", "说明": f"{config.base_year} 到 {config.target_year}"})
+    rows.append({"检查项": "输出目录", "状态": "通过" if _output_dir_ready(config) else "未通过", "说明": config.output_dir})
     history_ready, history_detail = _history_training_ready_detail(config)
-    rows.append(_check_row("历史训练数据", history_ready, history_detail))
+    rows.append({"检查项": "历史训练数据", "状态": "通过" if history_ready else "未通过", "说明": history_detail})
     return rows
-
-
-def _check_row(item, passed, detail):
-    return {"检查项": item, "状态": "通过" if passed else "未通过", "说明": detail}
 
 
 def _render_section_title(title, subtitle=""):
@@ -1063,15 +1143,6 @@ def _build_path_options(current_value, project_rasters, session_value=""):
     return options
 
 
-def _initial_path_value(current_value, options):
-    current_text = str(current_value).strip()
-    if current_text:
-        return current_text
-    if options:
-        return str(options[0]).strip()
-    return ""
-
-
 def _format_path_option(value):
     text = str(value).strip()
     if not text:
@@ -1150,10 +1221,7 @@ def _open_windows_folder_dialog(title):
 
 
 def _rerun_page():
-    if hasattr(st, "rerun"):
-        st.rerun()
-    else:
-        st.experimental_rerun()
+    st.rerun()
 
 
 @st.cache_data(show_spinner=False)
@@ -1307,7 +1375,7 @@ def _history_row_count_input(config):
         len(_parse_year_path_items(config.history_agbd_paths)),
         len(_parse_year_path_items(config.history_tcc_paths)),
         len(_parse_year_path_items(config.history_lulc_paths)),
-        int(getattr(config, "logging_library_years", 6)),
+        int(config.logging_library_years),
         2,
     )
     if "wizard_history_row_count" not in st.session_state:
@@ -1621,44 +1689,12 @@ def _history_training_ready_detail(config):
     return True, "共同年份：" + "、".join(str(year) for year in years)
 
 
-def _copy_data_settings(source, target):
-    target.use_raster_data = source.use_raster_data
-    target.agbd_raster_path = source.agbd_raster_path
-    target.tcc_raster_path = source.tcc_raster_path
-    target.lulc_base_raster_path = source.lulc_base_raster_path
-    target.lulc_target_raster_path = source.lulc_target_raster_path
-    target.drivers_raster_path = source.drivers_raster_path
-    target.reserve_raster_path = source.reserve_raster_path
-    target.env_raster_paths = source.env_raster_paths
-    target.use_history_training = source.use_history_training
-    target.history_agbd_paths = source.history_agbd_paths
-    target.history_tcc_paths = source.history_tcc_paths
-    target.history_lulc_paths = source.history_lulc_paths
-    target.forest_lulc_codes = source.forest_lulc_codes
-    target.urban_lulc_codes = source.urban_lulc_codes
-    target.logging_driver_value = source.logging_driver_value
-    target.reserve_value = source.reserve_value
-    target.write_raster_outputs = source.write_raster_outputs
-    target.output_dir = source.output_dir
-    target.batch_name = source.batch_name
-    target.grid_rows = source.grid_rows
-    target.grid_cols = source.grid_cols
-
-
 def _save_and_clear(config):
     set_config(config)
-    set_events([])
-    set_logging_patch_library(None)
-    set_simulation_bundle(None)
-    set_report_bundle(None)
     _reset_run_progress()
 
 
 def _clear_results_only():
-    set_events([])
-    set_logging_patch_library(None)
-    set_simulation_bundle(None)
-    set_report_bundle(None)
     _reset_run_progress()
 
 
@@ -1672,13 +1708,12 @@ def _clear_data_widget_state():
     for key in list(st.session_state.keys()):
         if key.startswith("wizard_") and (
             key.endswith("_path_text")
-            or key.endswith("_project_select")
             or key.endswith("_path_combo")
             or key.endswith("_pending_path")
             or key.startswith("wizard_extra_env_")
             or key == "wizard_extra_env_count"
             or key.startswith("wizard_hist_")
-            or key in {"wizard_data_mode", "wizard_output_dir_path_text", "wizard_use_history_training"}
+            or key == "wizard_output_dir_path_text"
         ):
             del st.session_state[key]
 
@@ -1716,7 +1751,3 @@ def _output_dir_ready(config):
         return True
     except Exception:
         return False
-
-
-def _status_text(value):
-    return "完成" if value else "待处理"

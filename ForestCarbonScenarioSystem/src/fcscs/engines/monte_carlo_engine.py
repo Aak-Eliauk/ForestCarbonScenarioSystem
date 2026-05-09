@@ -29,7 +29,9 @@ class MonteCarloEngine:
         agbd_stack = self._run_simulations(config, event_tables, model_context, rng)
 
         summary = self._build_summary(config, baseline_agbd_surface, agbd_stack, model_context)
-        event_summaries = self._build_event_summaries(event_tables)
+        event_summaries = []
+        for table in event_tables:
+            event_summaries.append(table.summary())
         yearly_event_df = self._build_yearly_event_df(event_tables)
         output_files = self._write_raster_outputs(config, agbd_stack, model_context)
 
@@ -47,7 +49,7 @@ class MonteCarloEngine:
     def _run_simulations(self, config, event_tables, model_context, rng):
         rows = config.grid_rows
         cols = config.grid_cols
-        # 每一层保存一次完整蒙特卡洛模拟的 AGBD 栅格。
+        # 每一层保存一次完整蒙特卡洛模拟的AGBD栅格。
         agbd_stack = np.zeros((config.mc_n_simulations, rows, cols), dtype=np.float32)
 
         for sim_index in range(config.mc_n_simulations):
@@ -58,8 +60,8 @@ class MonteCarloEngine:
 
     def _run_single_simulation(self, config, event_tables, model_context, rng):
         model_engine = AGBDModelEngine()
-        climate_shift = self._sample_climate_shift(rng)
-        climate_noise = self._sample_climate_noise((config.grid_rows, config.grid_cols), rng)
+        climate_shift = float(rng.normal(0.0, 1.4))
+        climate_noise = rng.normal(0.0, 1.8, size=(config.grid_rows, config.grid_cols)).astype(np.float32)
 
         baseline_surface = model_engine.predict_baseline_surface(
             config,
@@ -85,37 +87,29 @@ class MonteCarloEngine:
                 rng,
                 climate_shift,
             )
-            self._write_predicted_values(simulation_surface, rows, cols, predicted)
+            for index in range(len(predicted)):
+                row = int(rows[index])
+                col = int(cols[index])
+                simulation_surface[row, col] = predicted[index]
 
         simulation_surface = simulation_surface + climate_noise
         simulation_surface = simulation_surface + climate_shift
         simulation_surface = np.maximum(simulation_surface, 0.0)
         return simulation_surface.astype(np.float32)
 
-    def _write_predicted_values(self, surface, rows, cols, predicted):
-        for index in range(len(predicted)):
-            row = int(rows[index])
-            col = int(cols[index])
-            surface[row, col] = predicted[index]
-
-    def _sample_climate_shift(self, rng):
-        return float(rng.normal(0.0, 1.4))
-
-    def _sample_climate_noise(self, shape, rng):
-        return rng.normal(0.0, 1.8, size=shape).astype(np.float32)
-
     def _build_summary(self, config, baseline_agbd_surface, agbd_stack, model_context):
         mean_surface = np.nanmean(agbd_stack, axis=0)
         mean_agbd_per_sim = np.nanmean(agbd_stack, axis=(1, 2))
-        mean_agc_per_sim = self._convert_agbd_array_to_agc(mean_agbd_per_sim, config.agbd_to_agc_factor)
-        total_agbd_per_sim = self._calculate_total_agbd_per_sim(agbd_stack, config.pixel_area_ha)
-        total_agc_per_sim = self._convert_agbd_array_to_agc(total_agbd_per_sim, config.agbd_to_agc_factor)
+        mean_agc_per_sim = mean_agbd_per_sim * config.agbd_to_agc_factor
+        total_agbd_per_sim = np.nansum(agbd_stack * config.pixel_area_ha, axis=(1, 2))
+        total_agc_per_sim = total_agbd_per_sim * config.agbd_to_agc_factor
         reduction_surface = np.maximum(baseline_agbd_surface - mean_surface, 0.0)
         training_summary_df = model_context["training_summary_df"]
+        baseline_agbd_mean = float(np.nanmean(baseline_agbd_surface))
 
         return {
             "scenario_name": config.scenario_name,
-            "batch_name": getattr(config, "batch_name", config.scenario_name),
+            "batch_name": config.batch_name,
             "n_simulations": int(config.mc_n_simulations),
             "grid_rows": int(config.grid_rows),
             "grid_cols": int(config.grid_cols),
@@ -125,8 +119,8 @@ class MonteCarloEngine:
             "ml_algorithm": "RandomForestRegressor",
             "ml_model_count": int(len(training_summary_df)),
             "data_mode": "raster",
-            "baseline_agbd_mean": float(np.nanmean(baseline_agbd_surface)),
-            "baseline_agc_mean": float(self._convert_agbd_value_to_agc(float(np.nanmean(baseline_agbd_surface)), config.agbd_to_agc_factor)),
+            "baseline_agbd_mean": baseline_agbd_mean,
+            "baseline_agc_mean": float(baseline_agbd_mean * config.agbd_to_agc_factor),
             "mean_agbd_per_ha": float(np.nanmean(mean_agbd_per_sim)),
             "std_agbd_per_ha": float(np.nanstd(mean_agbd_per_sim)),
             "mean_agc_per_ha": float(np.nanmean(mean_agc_per_sim)),
@@ -140,21 +134,6 @@ class MonteCarloEngine:
             "mean_model_r2": float(training_summary_df["r2"].mean()),
             "mean_model_mae": float(training_summary_df["mae"].mean()),
         }
-
-    def _convert_agbd_value_to_agc(self, agbd_value, factor):
-        return agbd_value * factor
-
-    def _convert_agbd_array_to_agc(self, agbd_array, factor):
-        return agbd_array * factor
-
-    def _calculate_total_agbd_per_sim(self, agbd_stack, pixel_area_ha):
-        return np.nansum(agbd_stack * pixel_area_ha, axis=(1, 2))
-
-    def _build_event_summaries(self, event_tables):
-        event_summaries = []
-        for table in event_tables:
-            event_summaries.append(table.summary())
-        return event_summaries
 
     def _build_yearly_event_df(self, event_tables):
         frames = []
@@ -170,8 +149,6 @@ class MonteCarloEngine:
 
     def _write_raster_outputs(self, config, agbd_stack, model_context):
         output_files = {}
-        if not config.use_raster_data:
-            return output_files
         if not config.write_raster_outputs:
             return output_files
 
@@ -208,8 +185,6 @@ class MonteCarloEngine:
 class AGBDModelEngine:
     def prepare_context(self, config, event_tables):
         rng = np.random.default_rng(config.base_seed + 150)
-        if not config.use_raster_data:
-            raise ValueError("演示网格模式已删除，请使用真实栅格数据运行系统。")
         surfaces = self._build_raster_feature_surfaces(config, rng)
 
         models, training_sample_df = self._train_models(config, event_tables, surfaces, rng)
@@ -268,10 +243,6 @@ class AGBDModelEngine:
         return rows, cols, predicted
 
     def _train_models(self, config, event_tables, surfaces, rng):
-        if not getattr(config, "use_raster_data", False):
-            raise ValueError("演示网格和简化训练已删除，请使用真实栅格数据运行系统。")
-        if not getattr(config, "use_history_training", False):
-            raise ValueError("模型训练必须启用历史数据，请补充历史AGBD、树冠覆盖度和土地利用栅格。")
         if not self._history_training_ready(config):
             raise ValueError("历史训练数据不足：请提供至少两个共同年份的AGBD、树冠覆盖度和土地利用栅格。")
 
@@ -281,14 +252,9 @@ class AGBDModelEngine:
         raise ValueError("历史训练样本为空：请检查历史AGBD、树冠覆盖度、土地利用和森林损失驱动因素栅格。")
 
     def _history_training_ready(self, config):
-        if not getattr(config, "use_history_training", False):
-            return False
-        if not getattr(config, "use_raster_data", False):
-            return False
-
-        agbd_paths = parse_year_raster_paths(getattr(config, "history_agbd_paths", ""))
-        tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
-        lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
+        agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
+        tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
+        lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
         common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
             return False
@@ -345,9 +311,9 @@ class AGBDModelEngine:
         return False
 
     def _load_history_rasters(self, config):
-        agbd_paths = parse_year_raster_paths(getattr(config, "history_agbd_paths", ""))
-        tcc_paths = parse_year_raster_paths(getattr(config, "history_tcc_paths", ""))
-        lulc_paths = parse_year_raster_paths(getattr(config, "history_lulc_paths", ""))
+        agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
+        tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
+        lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
         # 三类历史栅格必须有共同年份，后面才可以构造相邻年份样本。
         common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
@@ -381,21 +347,19 @@ class AGBDModelEngine:
         if len(years) < 2:
             return None
 
-        logging_probability = None
-        urban_probability = None
         drivers_class = None
         drivers_loss_year = None
-        if path_exists(getattr(config, "drivers_raster_path", "")):
-            # Drivers 概率波段用于提高高概率扰动样本的训练权重。
-            drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
-            if drivers_class.shape != reference_shape:
-                drivers_class = None
-            try:
-                drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
-                if drivers_loss_year.shape != reference_shape:
-                    drivers_loss_year = None
-            except Exception:
-                drivers_loss_year = None
+        logging_probability = None
+        urban_probability = None
+        drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
+        if drivers_class.shape != reference_shape:
+            raise ValueError("Drivers分类波段尺寸必须和历史训练栅格一致。")
+
+        drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
+        if drivers_loss_year.shape != reference_shape:
+            raise ValueError("Drivers loss year波段尺寸必须和历史训练栅格一致。")
+
+        if config.use_driver_sample_weight:
             logging_probability = self._read_driver_probability(config, config.logging_probability_band, reference_shape)
             urban_probability = self._read_driver_probability(config, config.urban_probability_band, reference_shape)
 
@@ -413,11 +377,11 @@ class AGBDModelEngine:
     def _read_driver_probability(self, config, band, shape):
         try:
             data, _ = read_raster_band(config.drivers_raster_path, int(band), make_float=True)
-        except Exception:
-            return None
+        except Exception as error:
+            raise ValueError("Drivers概率波段读取失败：" + str(error))
         if data.shape != shape:
-            return None
-        scale = float(getattr(config, "driver_probability_scale", 250.0))
+            raise ValueError("Drivers概率波段尺寸必须和历史训练栅格一致。")
+        scale = float(config.driver_probability_scale)
         if scale <= 0:
             scale = 250.0
         data = data / scale
@@ -486,7 +450,11 @@ class AGBDModelEngine:
             agbd_end = history["agbd"][end_year]
             tcc_pre = history["tcc"][start_year]
             tcc_end = history["tcc"][end_year]
-            weight_surface = self._pick_weight_surface(history, event_type)
+            weight_surface = None
+            if event_type == "logging":
+                weight_surface = history.get("logging_probability")
+            elif event_type == "urban_conv":
+                weight_surface = history.get("urban_probability")
 
             for cell_id in cell_ids:
                 row = int(cell_id // config.grid_cols)
@@ -495,7 +463,15 @@ class AGBDModelEngine:
                     continue
                 if not np.isfinite(tcc_pre[row, col]) or not np.isfinite(tcc_end[row, col]):
                     continue
-                severity = self._calculate_tcc_severity(tcc_pre[row, col], tcc_end[row, col])
+
+                tcc_before = float(tcc_pre[row, col])
+                tcc_after = float(tcc_end[row, col])
+                if tcc_before <= 0.05:
+                    severity = 0.0
+                else:
+                    severity = (tcc_before - tcc_after) / tcc_before
+                    severity = float(np.clip(severity, 0.0, 0.95))
+
                 if event_type == "urban_conv" and severity < 0.62:
                     severity = 0.62
                 weight = 1.0
@@ -580,21 +556,6 @@ class AGBDModelEngine:
                         edge_mask[next_row, next_col] = True
         return edge_mask
 
-    def _pick_weight_surface(self, history, event_type):
-        if event_type == "logging":
-            return history.get("logging_probability")
-        if event_type == "urban_conv":
-            return history.get("urban_probability")
-        return None
-
-    def _calculate_tcc_severity(self, tcc_pre, tcc_end):
-        before = float(tcc_pre)
-        after = float(tcc_end)
-        if before <= 0.05:
-            return 0.0
-        severity = (before - after) / before
-        return float(np.clip(severity, 0.0, 0.95))
-
     def _build_training_sample_df(self, baseline_df, logging_df, urban_edge_df, urban_conv_df):
         rows = []
         self._append_training_sample_rows(rows, "baseline", baseline_df)
@@ -648,7 +609,7 @@ class AGBDModelEngine:
         x_test = self._fill_nan_matrix(x_test)
 
         sample_weight = None
-        if getattr(config, "use_driver_sample_weight", True):
+        if config.use_driver_sample_weight:
             if "sample_weight" in train_df.columns:
                 sample_weight = train_df["sample_weight"].to_numpy(dtype=np.float32)
                 sample_weight = np.where(np.isfinite(sample_weight), sample_weight, 1.0)
@@ -733,25 +694,24 @@ class AGBDModelEngine:
     def _build_training_summary_df(self, models):
         rows = []
 
-        baseline_item = models["baseline"]
-        rows.append(self._build_training_summary_row(baseline_item))
+        for model_name in ["baseline", "logging", "urban_edge", "urban_conv"]:
+            if model_name not in models:
+                continue
 
-        for model_name in ["logging", "urban_edge", "urban_conv"]:
-            if model_name in models:
-                rows.append(self._build_training_summary_row(models[model_name]))
+            item = models[model_name]
+            rows.append(
+                {
+                    "model_name": item["name"],
+                    "algorithm": "RandomForestRegressor",
+                    "sample_count": item["sample_count"],
+                    "train_count": item["train_count"],
+                    "test_count": item["test_count"],
+                    "mae": item["mae"],
+                    "r2": item["r2"],
+                }
+            )
 
         return pd.DataFrame(rows)
-
-    def _build_training_summary_row(self, item):
-        return {
-            "model_name": item["name"],
-            "algorithm": "RandomForestRegressor",
-            "sample_count": item["sample_count"],
-            "train_count": item["train_count"],
-            "test_count": item["test_count"],
-            "mae": item["mae"],
-            "r2": item["r2"],
-        }
 
     def _build_raster_feature_surfaces(self, config, rng):
         self._check_raster_inputs_for_prediction(config)
@@ -889,8 +849,8 @@ class AGBDModelEngine:
         return env_map
 
     def _build_raster_output_dir(self, config):
-        batch_dir = sanitize_scenario_name(getattr(config, "batch_name", config.scenario_name), default="运行批次")
-        output_dir = resolve_output_dir(getattr(config, "output_dir", "../ForestCarbonScenarioSystem_outputs")) / batch_dir / "raster_predictions"
+        batch_dir = sanitize_scenario_name(config.batch_name, default="运行批次")
+        output_dir = resolve_output_dir(config.output_dir) / batch_dir / "raster_predictions"
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir
 

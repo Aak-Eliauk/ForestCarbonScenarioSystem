@@ -41,7 +41,7 @@ def main():
         status["stage"] = "完成"
         status["message"] = "后台运行完成，结果已保存。"
         status["run_mode"] = run_mode
-        status["batch_name"] = getattr(config, "batch_name", "")
+        status["batch_name"] = config.batch_name
         status["scenario_name"] = config.scenario_name
         status["report_dir"] = str(export_dir)
         status["raster_dir"] = str(batch_dir / "raster_predictions")

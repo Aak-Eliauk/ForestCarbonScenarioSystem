@@ -18,16 +18,11 @@ STATUS_FILE_NAME = "run_status.json"
 
 
 def get_batch_output_dir(config, create=True):
-    batch_name = sanitize_scenario_name(getattr(config, "batch_name", config.scenario_name), default="运行批次")
+    batch_name = sanitize_scenario_name(config.batch_name, default="运行批次")
     batch_dir = resolve_output_dir(config.output_dir) / batch_name
     if create:
         batch_dir.mkdir(parents=True, exist_ok=True)
     return batch_dir
-
-
-def get_status_path(config, create=True):
-    batch_dir = get_batch_output_dir(config, create=create)
-    return batch_dir / STATUS_FILE_NAME
 
 
 def start_background_run(config, run_mode, quick_size):
@@ -51,7 +46,7 @@ def start_background_run(config, run_mode, quick_size):
             "percent": 1,
             "stage": "启动后台进程",
             "message": "后台计算进程正在启动。",
-            "batch_name": getattr(run_config, "batch_name", ""),
+            "batch_name": run_config.batch_name,
             "scenario_name": run_config.scenario_name,
             "run_mode": run_mode,
             "config_path": str(config_path),
@@ -60,7 +55,7 @@ def start_background_run(config, run_mode, quick_size):
         },
     )
 
-    # 子进程需要能找到 src 目录下的 fcscs 包，所以这里补上 PYTHONPATH。
+    # 子进程需要能找到src目录下的fcscs包，所以这里补上PYTHONPATH。
     project_root = Path(__file__).resolve().parents[3]
     src_dir = project_root / "src"
     env = os.environ.copy()
@@ -158,7 +153,7 @@ def read_status(status_path):
 
 
 def find_recent_jobs(output_dir, limit=10):
-    # 输出目录下每个批次都有一个 run_status.json。
+    # 输出目录下每个批次都有一个run_status.json。
     output_dir = Path(output_dir)
     if not output_dir.exists():
         return []
