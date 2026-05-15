@@ -14,7 +14,7 @@ from fcscs.engines.raster_tools import (
 )
 
 
-# 情景生成模块负责通过Drivers和LULC生成未来扰动事件。
+# 情景生成模块负责通过Drivers和LULC生成未来扰动事件
 
 
 class ScenarioEngine:
@@ -26,7 +26,7 @@ class ScenarioEngine:
         return self._generate_all_events_from_rasters(config)
 
     def _generate_all_events_from_rasters(self, config):
-        # 读取基准年和目标年LULC后，先判断森林、城镇和保护区范围。
+        # 读取基准年和目标年LULC后，先判断森林、城镇和保护区范围
         self._check_raster_config(config)
         rng = np.random.default_rng(config.base_seed)
 
@@ -45,7 +45,7 @@ class ScenarioEngine:
         forest_target = np.isin(lulc_target, forest_codes)
         urban_target = np.isin(lulc_target, urban_codes)
 
-        # 采伐事件先生成，避免与后续城镇事件冲突。
+        # 采伐事件先生成，避免与后续城镇事件冲突
         logging_events = self._generate_raster_logging_events(config, rng, forest_target, reserve_mask)
         logging_pixels = self._build_pixel_id_set(logging_events.records)
 
@@ -96,7 +96,7 @@ class ScenarioEngine:
         return reserve == config.reserve_value
 
     def _generate_raster_logging_events(self, config, rng, forest_target, reserve_mask):
-        # Drivers确定采伐候选区，采伐斑块库从这些区域中提取。
+        # Drivers确定采伐候选区，采伐斑块库从这些区域中提取
         drivers, _ = read_raster(config.drivers_raster_path)
         if drivers.shape != forest_target.shape:
             raise ValueError("Drivers 栅格尺寸必须和 LULC 栅格一致。")
@@ -113,7 +113,7 @@ class ScenarioEngine:
         return EventTable("logging", records)
 
     def _generate_raster_urban_conv_events(self, config, rng, forest_base, urban_target, reserve_mask, logging_pixels):
-        # 城镇转换基准年是森林、目标年变为城镇的像元。
+        # 城镇转换基准年是森林、目标年变为城镇的像元
         conv_mask = forest_base & urban_target & (~reserve_mask)
         rows, cols = np.where(conv_mask)
         raw_count = len(rows)
@@ -165,7 +165,7 @@ class ScenarioEngine:
         logging_pixels,
         conv_pixels,
     ):
-        # 城镇边缘扰动只是记录新增城镇周边的森林像元。
+        # 城镇边缘扰动只是记录新增城镇周边的森林像元
         edge_year_map = {}
         edge_position_map = {}
         blocked_pixels = set(logging_pixels)
@@ -639,7 +639,14 @@ class SeverityEngine:
         urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
         samples = []
         max_samples = max(200, int(config.severity_sample_count))
-        drivers_class, drivers_loss_year = self._read_logging_driver_layers(event_type, config)
+        drivers_class = None
+        drivers_loss_year = None
+        if event_type == "logging":
+            try:
+                drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
+                drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
+            except Exception as error:
+                raise ValueError("Drivers栅格需要包含分类波段和loss year波段：" + str(error))
 
         env_surfaces = None
         for index in range(len(years) - 1):
@@ -689,16 +696,6 @@ class SeverityEngine:
         if not samples:
             return None
         return pd.DataFrame(samples)
-
-    def _read_logging_driver_layers(self, event_type, config):
-        if event_type != "logging":
-            return None, None
-        try:
-            drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
-            drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
-            return drivers_class, drivers_loss_year
-        except Exception as error:
-            raise ValueError("Drivers栅格需要包含分类波段和loss year波段：" + str(error))
 
     def _build_logging_history_mask(self, mask, drivers_class, drivers_loss_year, raster_shape, end_year, config):
         if drivers_class is None or drivers_class.shape != raster_shape:

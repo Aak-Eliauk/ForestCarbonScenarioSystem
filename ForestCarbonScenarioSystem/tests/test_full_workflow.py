@@ -49,14 +49,12 @@ class FullWorkflowTest(unittest.TestCase):
         agbd_2022 = np.full((rows, cols), 102.0, dtype=np.float32)
         agbd_2022[2:6, 2:6] = 54.0
         agbd_2022[1:7, 1:7] = np.minimum(agbd_2022[1:7, 1:7], 82.0)
-        agbd_2022[2:6, 2:6] = 54.0
         agbd_2022[10:14, 10:14] = 48.0
 
         tcc_2021 = np.full((rows, cols), 0.68, dtype=np.float32)
         tcc_2022 = np.full((rows, cols), 0.72, dtype=np.float32)
         tcc_2022[2:6, 2:6] = 0.24
         tcc_2022[1:7, 1:7] = np.minimum(tcc_2022[1:7, 1:7], 0.48)
-        tcc_2022[2:6, 2:6] = 0.24
         tcc_2022[10:14, 10:14] = 0.18
 
         lulc_base = np.full((rows, cols), 1, dtype=np.uint8)

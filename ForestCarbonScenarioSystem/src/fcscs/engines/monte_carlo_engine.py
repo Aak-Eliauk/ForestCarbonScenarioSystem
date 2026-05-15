@@ -22,7 +22,7 @@ class MonteCarloEngine:
     def run(self, event_tables, config):
         rng = np.random.default_rng(config.base_seed + 200)
         model_engine = AGBDModelEngine()
-        # 先用历史数据训练模型，再进入蒙特卡洛预测。
+        # 先用历史数据训练模型，再进入蒙特卡洛预测
         model_context = model_engine.prepare_context(config, event_tables)
 
         baseline_agbd_surface = model_context["baseline_prediction_surface"]
@@ -49,7 +49,7 @@ class MonteCarloEngine:
     def _run_simulations(self, config, event_tables, model_context, rng):
         rows = config.grid_rows
         cols = config.grid_cols
-        # 每一层保存一次完整蒙特卡洛模拟的AGBD栅格。
+        # 每一层保存一次完整蒙特卡洛模拟的AGBD栅格
         agbd_stack = np.zeros((config.mc_n_simulations, rows, cols), dtype=np.float32)
 
         for sim_index in range(config.mc_n_simulations):
@@ -314,7 +314,7 @@ class AGBDModelEngine:
         agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
         tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
         lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
-        # 三类历史栅格必须有共同年份，后面才可以构造相邻年份样本。
+        # 三类历史栅格必须有共同年份，后面才可以构造相邻年份样本
         common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
             return None
@@ -430,7 +430,7 @@ class AGBDModelEngine:
         return pd.DataFrame(rows)
 
     def _build_history_event_training_df(self, config, surfaces, history, event_type, rng):
-        # 事件模型只学习历史中发生过对应扰动的像元。
+        # 事件模型只学习历史中发生过对应扰动的像元
         rows = []
         year_pairs = self._build_history_year_pairs(history["years"])
         max_per_pair = max(20, int(config.ml_sample_count / max(len(year_pairs), 1)))
@@ -558,22 +558,23 @@ class AGBDModelEngine:
 
     def _build_training_sample_df(self, baseline_df, logging_df, urban_edge_df, urban_conv_df):
         rows = []
-        self._append_training_sample_rows(rows, "baseline", baseline_df)
-        self._append_training_sample_rows(rows, "logging", logging_df)
-        self._append_training_sample_rows(rows, "urban_edge", urban_edge_df)
-        self._append_training_sample_rows(rows, "urban_conv", urban_conv_df)
-        return pd.DataFrame(rows)
-
-    def _append_training_sample_rows(self, rows, model_name, source_df):
         max_rows = 30
-        row_index = 0
-        while row_index < len(source_df) and row_index < max_rows:
-            source_row = source_df.iloc[row_index]
-            output_row = {"model_name": model_name, "sample_no": row_index + 1}
-            for column_name in source_df.columns:
-                output_row[column_name] = source_row[column_name]
-            rows.append(output_row)
-            row_index += 1
+        sample_groups = [
+            ("baseline", baseline_df),
+            ("logging", logging_df),
+            ("urban_edge", urban_edge_df),
+            ("urban_conv", urban_conv_df),
+        ]
+        for model_name, source_df in sample_groups:
+            row_index = 0
+            while row_index < len(source_df) and row_index < max_rows:
+                source_row = source_df.iloc[row_index]
+                output_row = {"model_name": model_name, "sample_no": row_index + 1}
+                for column_name in source_df.columns:
+                    output_row[column_name] = source_row[column_name]
+                rows.append(output_row)
+                row_index += 1
+        return pd.DataFrame(rows)
 
     def _baseline_feature_columns(self, surfaces):
         columns = ["AGBD_pre", "TCC_pre"]

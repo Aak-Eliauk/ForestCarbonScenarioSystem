@@ -97,14 +97,20 @@ def render_workbench_step_sidebar(active_panel="workflow"):
 def render_run_log_page():
     render_page_banner("运行日志", "集中查看本次运行记录、异常提示和历史日志文件。")
 
+    config = get_config()
     log_rows = st.session_state.get(RUN_LOG_KEY, [])
     log_path = st.session_state.get(RUN_LOG_PATH_KEY)
+    running_jobs = _running_background_jobs(config)
     recent_log_files = _get_recent_log_files()
 
     c1, c2, c3 = st.columns(3)
-    c1.metric("本次日志", len(log_rows))
-    c2.metric("历史文件", len(recent_log_files))
-    c3.metric("当前状态", st.session_state.get(RUN_STAGE_KEY, "等待开始"))
+    c1.metric("本次记录", len(log_rows) + len(running_jobs))
+    c2.metric("日志文件", len(recent_log_files))
+    if running_jobs:
+        current_state = "运行中 " + str(len(running_jobs)) + " 个"
+    else:
+        current_state = st.session_state.get(RUN_STAGE_KEY, "等待开始")
+    c3.metric("当前状态", current_state)
 
     c_back, c_path = st.columns([1, 2])
     with c_back:
@@ -114,16 +120,55 @@ def render_run_log_page():
     with c_path:
         if log_path:
             st.caption("当前日志文件：" + str(log_path))
+        elif running_jobs:
+            st.caption("正在读取后台运行批次的日志文件。")
         else:
             st.caption("当前还没有新的运行日志。开始运行后会自动记录。")
 
-    st.subheader("本次运行记录")
-    if log_rows:
-        st.dataframe(pd.DataFrame(log_rows), use_container_width=True, hide_index=True)
-    else:
-        st.info("本次会话暂无运行日志。")
-
+    _render_current_run_records(log_rows, running_jobs)
     _render_recent_log_files(recent_log_files)
+
+
+def _render_current_run_records(log_rows, running_jobs):
+    st.subheader("本次运行记录")
+    has_content = False
+
+    if running_jobs:
+        st.markdown("**正在运行的后台任务**")
+        rows = []
+        labels = []
+        for index, job in enumerate(running_jobs):
+            batch_name = str(job.get("batch_name", ""))
+            state_label = _format_job_state(job.get("state", ""))
+            labels.append(batch_name + " / " + state_label)
+            rows.append(
+                {
+                    "批次": batch_name,
+                    "状态": state_label,
+                    "进度": str(job.get("percent", 0)) + "%",
+                    "阶段": job.get("stage", ""),
+                    "更新时间": job.get("updated_at", ""),
+                }
+            )
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+
+        selected_label = st.selectbox("查看正在运行的批次日志", labels, key="running_log_file_select")
+        selected_index = labels.index(selected_label)
+        selected_job = running_jobs[selected_index]
+        file_rows = _read_run_event_rows(selected_job.get("run_log_path", ""), limit=20)
+        if file_rows:
+            st.dataframe(pd.DataFrame(file_rows), use_container_width=True, hide_index=True)
+        else:
+            st.info("该批次已经启动，日志文件正在生成。")
+        has_content = True
+
+    if log_rows:
+        st.markdown("**本次会话记录**")
+        st.dataframe(pd.DataFrame(log_rows), use_container_width=True, hide_index=True)
+        has_content = True
+
+    if not has_content:
+        st.info("本次会话暂无运行日志。")
 
 
 def _render_run_status_content(config):
@@ -279,65 +324,25 @@ def _render_data_step(current):
                 return
 
             new_config = current.copy()
-            _fill_data_config(
-                new_config,
-                output_dir,
-                agbd_raster_path,
-                tcc_raster_path,
-                lulc_base_raster_path,
-                lulc_target_raster_path,
-                drivers_raster_path,
-                reserve_raster_path,
-                env_raster_paths,
-                history_agbd_paths,
-                history_tcc_paths,
-                history_lulc_paths,
-                forest_lulc_codes,
-                urban_lulc_codes,
-                logging_driver_value,
-                reserve_value,
-                write_raster_outputs,
-            )
+            new_config.output_dir = output_dir
+            new_config.agbd_raster_path = agbd_raster_path
+            new_config.tcc_raster_path = tcc_raster_path
+            new_config.lulc_base_raster_path = lulc_base_raster_path
+            new_config.lulc_target_raster_path = lulc_target_raster_path
+            new_config.drivers_raster_path = drivers_raster_path
+            new_config.reserve_raster_path = reserve_raster_path
+            new_config.env_raster_paths = env_raster_paths
+            new_config.history_agbd_paths = history_agbd_paths
+            new_config.history_tcc_paths = history_tcc_paths
+            new_config.history_lulc_paths = history_lulc_paths
+            new_config.forest_lulc_codes = forest_lulc_codes
+            new_config.urban_lulc_codes = urban_lulc_codes
+            new_config.logging_driver_value = int(logging_driver_value)
+            new_config.reserve_value = int(reserve_value)
+            new_config.write_raster_outputs = bool(write_raster_outputs)
 
             _save_and_clear(new_config)
             _go_to_step(1)
-
-
-def _fill_data_config(
-    config,
-    output_dir,
-    agbd_raster_path,
-    tcc_raster_path,
-    lulc_base_raster_path,
-    lulc_target_raster_path,
-    drivers_raster_path,
-    reserve_raster_path,
-    env_raster_paths,
-    history_agbd_paths,
-    history_tcc_paths,
-    history_lulc_paths,
-    forest_lulc_codes,
-    urban_lulc_codes,
-    logging_driver_value,
-    reserve_value,
-    write_raster_outputs,
-):
-    config.agbd_raster_path = agbd_raster_path
-    config.tcc_raster_path = tcc_raster_path
-    config.lulc_base_raster_path = lulc_base_raster_path
-    config.lulc_target_raster_path = lulc_target_raster_path
-    config.drivers_raster_path = drivers_raster_path
-    config.reserve_raster_path = reserve_raster_path
-    config.env_raster_paths = env_raster_paths
-    config.history_agbd_paths = history_agbd_paths
-    config.history_tcc_paths = history_tcc_paths
-    config.history_lulc_paths = history_lulc_paths
-    config.forest_lulc_codes = forest_lulc_codes
-    config.urban_lulc_codes = urban_lulc_codes
-    config.logging_driver_value = int(logging_driver_value)
-    config.reserve_value = int(reserve_value)
-    config.write_raster_outputs = bool(write_raster_outputs)
-    config.output_dir = output_dir
 
 
 def _render_scenario_step(current):
@@ -455,96 +460,36 @@ def _render_scenario_step(current):
                 return
 
             new_config = current.copy()
-            _fill_scenario_config(
-                new_config,
-                scenario_name,
-                base_year,
-                target_year,
-                logging_area_reduction,
-                logging_severity_reduction,
-                logging_cap,
-                urban_area_reduction,
-                urban_speed_shift,
-                urban_severity_reduction,
-                logging_patch_min_size,
-                logging_patch_max_size,
-                logging_library_years,
-                logging_library_patch_count,
-                mc_n_simulations,
-                ml_sample_count,
-                ml_n_estimators,
-                ml_max_depth,
-                agbd_to_agc_factor,
-                pixel_area_ha,
-                severity_method,
-                base_seed,
-                use_driver_sample_weight,
-                logging_probability_band,
-                urban_probability_band,
-                driver_probability_scale,
-                severity_sample_count,
-            )
+            new_config.scenario_name = sanitize_scenario_name(scenario_name)
+            new_config.base_year = int(base_year)
+            new_config.target_year = int(target_year)
+            new_config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
+            new_config.logging_area_reduction = float(logging_area_reduction)
+            new_config.logging_severity_reduction = float(logging_severity_reduction)
+            new_config.logging_severity_cap_quantile = float(logging_cap)
+            new_config.urban_area_reduction = float(urban_area_reduction)
+            new_config.urban_speed_shift = float(urban_speed_shift)
+            new_config.urban_severity_reduction = float(urban_severity_reduction)
+            new_config.logging_patch_min_size = int(logging_patch_min_size)
+            new_config.logging_patch_max_size = int(logging_patch_max_size)
+            new_config.logging_library_years = int(logging_library_years)
+            new_config.logging_library_patch_count = int(logging_library_patch_count)
+            new_config.mc_n_simulations = int(mc_n_simulations)
+            new_config.ml_sample_count = int(ml_sample_count)
+            new_config.ml_n_estimators = int(ml_n_estimators)
+            new_config.ml_max_depth = int(ml_max_depth)
+            new_config.agbd_to_agc_factor = float(agbd_to_agc_factor)
+            new_config.pixel_area_ha = float(pixel_area_ha)
+            new_config.severity_method = severity_method
+            new_config.base_seed = int(base_seed)
+            new_config.use_driver_sample_weight = bool(use_driver_sample_weight)
+            new_config.logging_probability_band = int(logging_probability_band)
+            new_config.urban_probability_band = int(urban_probability_band)
+            new_config.driver_probability_scale = float(driver_probability_scale)
+            new_config.severity_sample_count = int(severity_sample_count)
 
             _save_and_clear(new_config)
             _go_to_step(2)
-
-
-def _fill_scenario_config(
-    config,
-    scenario_name,
-    base_year,
-    target_year,
-    logging_area_reduction,
-    logging_severity_reduction,
-    logging_cap,
-    urban_area_reduction,
-    urban_speed_shift,
-    urban_severity_reduction,
-    logging_patch_min_size,
-    logging_patch_max_size,
-    logging_library_years,
-    logging_library_patch_count,
-    mc_n_simulations,
-    ml_sample_count,
-    ml_n_estimators,
-    ml_max_depth,
-    agbd_to_agc_factor,
-    pixel_area_ha,
-    severity_method,
-    base_seed,
-    use_driver_sample_weight,
-    logging_probability_band,
-    urban_probability_band,
-    driver_probability_scale,
-    severity_sample_count,
-):
-    config.scenario_name = sanitize_scenario_name(scenario_name)
-    config.base_year = int(base_year)
-    config.target_year = int(target_year)
-    config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
-    config.logging_area_reduction = float(logging_area_reduction)
-    config.logging_severity_reduction = float(logging_severity_reduction)
-    config.logging_severity_cap_quantile = float(logging_cap)
-    config.urban_area_reduction = float(urban_area_reduction)
-    config.urban_speed_shift = float(urban_speed_shift)
-    config.urban_severity_reduction = float(urban_severity_reduction)
-    config.logging_patch_min_size = int(logging_patch_min_size)
-    config.logging_patch_max_size = int(logging_patch_max_size)
-    config.logging_library_years = int(logging_library_years)
-    config.logging_library_patch_count = int(logging_library_patch_count)
-    config.mc_n_simulations = int(mc_n_simulations)
-    config.ml_sample_count = int(ml_sample_count)
-    config.ml_n_estimators = int(ml_n_estimators)
-    config.ml_max_depth = int(ml_max_depth)
-    config.agbd_to_agc_factor = float(agbd_to_agc_factor)
-    config.pixel_area_ha = float(pixel_area_ha)
-    config.severity_method = severity_method
-    config.base_seed = int(base_seed)
-    config.use_driver_sample_weight = bool(use_driver_sample_weight)
-    config.logging_probability_band = int(logging_probability_band)
-    config.urban_probability_band = int(urban_probability_band)
-    config.driver_probability_scale = float(driver_probability_scale)
-    config.severity_sample_count = int(severity_sample_count)
 
 
 def _find_preset_index(scenario_name, preset_names):
@@ -976,16 +921,21 @@ def _get_recent_log_files(limit=12):
     log_files = []
     if output_dir.exists():
         for path in output_dir.glob("*/run_logs/run_events.log"):
+            status_path = path.parent.parent / "run_status.json"
+            status = read_status(status_path)
+            state = str(status.get("state", ""))
+            if state in {"starting", "running"}:
+                continue
             if path.is_file():
                 log_files.append(path)
     return sorted(log_files, key=lambda item: item.stat().st_mtime, reverse=True)[:limit]
 
 
 def _render_recent_log_files(log_files):
-    st.subheader("历史日志文件")
+    st.subheader("日志文件")
 
     if not log_files:
-        st.caption("还没有生成历史日志文件。")
+        st.caption("还没有生成日志文件。")
         return
 
     rows = []

@@ -137,7 +137,7 @@ class ScenarioConfig:
         write_raster_outputs=True,
         output_dir="../ForestCarbonScenarioSystem_outputs",
     ):
-        # 基本信息和年份范围。
+        # 基本信息和年份范围
         self.scenario_name = sanitize_scenario_name(scenario_name)
         if batch_name is None:
             batch_name = build_default_batch_name(scenario_name)
@@ -149,7 +149,7 @@ class ScenarioConfig:
         else:
             self.future_years = [int(year) for year in future_years]
 
-        # 情景控制和蒙特卡洛参数。
+        # 情景控制和蒙特卡洛参数
         self.logging_area_reduction = float(logging_area_reduction)
         self.logging_severity_reduction = float(logging_severity_reduction)
         self.logging_severity_cap_quantile = logging_severity_cap_quantile
@@ -173,7 +173,7 @@ class ScenarioConfig:
         self.ml_n_estimators = int(ml_n_estimators)
         self.ml_max_depth = int(ml_max_depth)
 
-        # 历史栅格默认按年份连续填写。
+        # 历史栅格默认按年份连续填写
         if history_agbd_paths is None:
             history_agbd_paths = build_default_year_paths("AGBD", "Hubei_AGB")
         if history_tcc_paths is None:
@@ -189,7 +189,7 @@ class ScenarioConfig:
         self.driver_probability_scale = float(driver_probability_scale)
         self.severity_sample_count = int(severity_sample_count)
 
-        # 栅格路径和分类编码。
+        # 栅格路径和分类编码
         self.agbd_raster_path = str(agbd_raster_path)
         self.tcc_raster_path = str(tcc_raster_path)
         self.lulc_base_raster_path = str(lulc_base_raster_path)
@@ -214,56 +214,9 @@ class ScenarioConfig:
         return years
 
     def to_dict(self):
-        return {
-            "scenario_name": self.scenario_name,
-            "batch_name": self.batch_name,
-            "base_year": self.base_year,
-            "target_year": self.target_year,
-            "future_years": list(self.future_years),
-            "logging_area_reduction": self.logging_area_reduction,
-            "logging_severity_reduction": self.logging_severity_reduction,
-            "logging_severity_cap_quantile": self.logging_severity_cap_quantile,
-            "urban_area_reduction": self.urban_area_reduction,
-            "urban_speed_shift": self.urban_speed_shift,
-            "urban_severity_reduction": self.urban_severity_reduction,
-            "reserve_ratio": self.reserve_ratio,
-            "urban_center_count": self.urban_center_count,
-            "logging_patch_min_size": self.logging_patch_min_size,
-            "logging_patch_max_size": self.logging_patch_max_size,
-            "logging_library_years": self.logging_library_years,
-            "logging_library_patch_count": self.logging_library_patch_count,
-            "mc_n_simulations": self.mc_n_simulations,
-            "severity_method": self.severity_method,
-            "base_seed": self.base_seed,
-            "grid_rows": self.grid_rows,
-            "grid_cols": self.grid_cols,
-            "agbd_to_agc_factor": self.agbd_to_agc_factor,
-            "pixel_area_ha": self.pixel_area_ha,
-            "ml_sample_count": self.ml_sample_count,
-            "ml_n_estimators": self.ml_n_estimators,
-            "ml_max_depth": self.ml_max_depth,
-            "history_agbd_paths": self.history_agbd_paths,
-            "history_tcc_paths": self.history_tcc_paths,
-            "history_lulc_paths": self.history_lulc_paths,
-            "use_driver_sample_weight": self.use_driver_sample_weight,
-            "logging_probability_band": self.logging_probability_band,
-            "urban_probability_band": self.urban_probability_band,
-            "driver_probability_scale": self.driver_probability_scale,
-            "severity_sample_count": self.severity_sample_count,
-            "agbd_raster_path": self.agbd_raster_path,
-            "tcc_raster_path": self.tcc_raster_path,
-            "lulc_base_raster_path": self.lulc_base_raster_path,
-            "lulc_target_raster_path": self.lulc_target_raster_path,
-            "drivers_raster_path": self.drivers_raster_path,
-            "reserve_raster_path": self.reserve_raster_path,
-            "env_raster_paths": self.env_raster_paths,
-            "forest_lulc_codes": self.forest_lulc_codes,
-            "urban_lulc_codes": self.urban_lulc_codes,
-            "logging_driver_value": self.logging_driver_value,
-            "reserve_value": self.reserve_value,
-            "write_raster_outputs": self.write_raster_outputs,
-            "output_dir": self.output_dir,
-        }
+        data = dict(self.__dict__)
+        data["future_years"] = list(self.future_years)
+        return data
 
     def copy(self):
         return ScenarioConfig(**self.to_dict())

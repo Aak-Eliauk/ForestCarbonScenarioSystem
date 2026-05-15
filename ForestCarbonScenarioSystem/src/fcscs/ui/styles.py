@@ -15,10 +15,7 @@ a[href*="chatgpt.com"] {
 }
 
 .stApp {
-    background:
-        radial-gradient(circle at 12% 8%, rgba(58, 122, 87, 0.16), transparent 28%),
-        radial-gradient(circle at 88% 0%, rgba(217, 157, 73, 0.14), transparent 24%),
-        linear-gradient(135deg, #f7f4ec 0%, #edf3ec 48%, #e7efe2 100%);
+    background: #f3f6ef;
     color: #1f2f28;
 }
 
@@ -29,15 +26,13 @@ a[href*="chatgpt.com"] {
 }
 
 .app-hero {
-    position: relative;
     overflow: hidden;
     padding: 1rem 1.25rem;
     border-radius: 8px;
-    background: linear-gradient(120deg, rgba(23, 65, 47, 0.96), rgba(47, 103, 75, 0.94));
+    background: #245f43;
     color: #fffaf0;
     margin-bottom: 1rem;
-    border: 1px solid rgba(255, 255, 255, 0.22);
-    box-shadow: 0 14px 34px rgba(34, 66, 48, 0.16);
+    border: 1px solid #1f5139;
 }
 
 .app-hero h1 {
@@ -52,45 +47,14 @@ a[href*="chatgpt.com"] {
     max-width: 900px;
     font-size: 0.94rem;
     line-height: 1.65;
-    color: rgba(255, 250, 240, 0.9);
-}
-
-.soft-card {
-    background: rgba(255, 255, 255, 0.78);
-    border: 1px solid rgba(38, 83, 59, 0.12);
-    border-radius: 8px;
-    padding: 1rem 1.1rem;
-    box-shadow: 0 10px 24px rgba(68, 88, 73, 0.08);
-    margin-bottom: 1rem;
-}
-
-.soft-card h3 {
-    margin: 0 0 0.5rem 0;
-    color: #1f4a37;
-    font-size: 1.02rem;
-    font-weight: 720;
-}
-
-.soft-card p {
-    color: #2b4338;
-    line-height: 1.62;
-    font-size: 0.94rem;
-    margin: 0 0 0.35rem 0;
-}
-
-.metric-box {
-    background: rgba(255, 255, 255, 0.82);
-    border-radius: 8px;
-    padding: 0.85rem 0.95rem;
-    border: 1px solid rgba(38, 83, 59, 0.12);
-    box-shadow: 0 8px 20px rgba(68, 88, 73, 0.06);
+    color: #fff7e8;
 }
 """
 
 SIDEBAR_STYLE = """
 [data-testid="stSidebar"] {
-    background: linear-gradient(180deg, rgba(18, 52, 38, 0.98) 0%, rgba(28, 70, 50, 0.98) 55%, rgba(35, 82, 58, 0.98) 100%);
-    border-right: 1px solid rgba(255, 255, 255, 0.12);
+    background: #123d2b;
+    border-right: 1px solid #2d5a43;
 }
 
 [data-testid="stSidebar"] [data-testid="stSidebarContent"] {
@@ -112,7 +76,7 @@ SIDEBAR_STYLE = """
 
 .sidebar-brand {
     padding: 0 0 0.85rem 0;
-    border-bottom: 1px solid rgba(255, 250, 240, 0.16);
+    border-bottom: 1px solid rgba(255, 250, 240, 0.18);
     margin: -0.16rem 0 0.9rem 0;
 }
 
@@ -129,14 +93,13 @@ SIDEBAR_STYLE = """
     display: grid;
     place-items: center;
     border-radius: 8px;
-    background: linear-gradient(145deg, rgba(255, 250, 240, 0.96), rgba(212, 232, 211, 0.94));
+    background: #f3f2e8;
     color: #163a2a !important;
     font-size: 0.7rem;
     line-height: 1.05;
     text-align: center;
     font-weight: 820;
     letter-spacing: 0;
-    box-shadow: 0 12px 28px rgba(8, 28, 18, 0.24);
 }
 
 .brand-copy {
@@ -168,7 +131,6 @@ SIDEBAR_STYLE = """
     border: 1px solid rgba(255, 250, 240, 0.13);
     border-radius: 8px;
     background: rgba(255, 250, 240, 0.07);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
     transition: background 160ms ease, border-color 160ms ease;
 }
 
@@ -180,7 +142,6 @@ SIDEBAR_STYLE = """
 [data-testid="stSidebar"] .stRadio label[data-baseweb="radio"]:has(input:checked) {
     background: rgba(255, 250, 240, 0.96);
     border-color: rgba(255, 250, 240, 0.96);
-    box-shadow: 0 10px 24px rgba(10, 31, 22, 0.2);
 }
 
 [data-testid="stSidebar"] .stRadio label[data-baseweb="radio"]:has(input:checked) p,
@@ -226,7 +187,6 @@ SIDEBAR_STYLE = """
     background: rgba(255, 250, 240, 0.96);
     border-color: rgba(255, 250, 240, 0.96);
     color: #163a2a;
-    box-shadow: 0 10px 24px rgba(10, 31, 22, 0.2);
 }
 
 [data-testid="stSidebar"] div.stButton > button {
@@ -247,11 +207,10 @@ SIDEBAR_STYLE = """
 
 FORM_STYLE = """
 div[data-testid="stForm"] {
-    background: rgba(255, 255, 255, 0.8);
+    background: #ffffff;
     border-radius: 8px;
     padding: 1rem 1rem 0.6rem 1rem;
     border: 1px solid rgba(38, 83, 59, 0.12);
-    box-shadow: 0 12px 28px rgba(68, 88, 73, 0.07);
 }
 
 div.stButton > button {
@@ -268,28 +227,9 @@ div[data-testid="stDataFrame"] {
 div[data-testid="stTextArea"] textarea {
     border-radius: 8px;
     border-color: rgba(38, 83, 59, 0.12);
-    background: rgba(255, 255, 255, 0.72);
+    background: #ffffff;
     font-family: Consolas, "Courier New", monospace;
     line-height: 1.55;
-}
-
-.section-card {
-    background: rgba(255, 255, 255, 0.84);
-    border: 1px solid rgba(38, 83, 59, 0.12);
-    border-radius: 8px;
-    padding: 1rem;
-    box-shadow: 0 14px 34px rgba(68, 88, 73, 0.09);
-    margin-bottom: 1rem;
-}
-
-.status-pill {
-    display: inline-block;
-    padding: 0.22rem 0.62rem;
-    border-radius: 8px;
-    background: rgba(39, 105, 73, 0.12);
-    color: #173f2e;
-    font-weight: 700;
-    font-size: 0.82rem;
 }
 
 .data-section-title {
@@ -297,11 +237,10 @@ div[data-testid="stTextArea"] textarea {
     padding: 0.72rem 0.9rem;
     border-left: 5px solid #245f43;
     border-radius: 8px;
-    background: linear-gradient(90deg, rgba(36, 95, 67, 0.12), rgba(255, 255, 255, 0.42));
+    background: #edf5ec;
     color: #173d2d;
     font-size: 1.02rem;
     font-weight: 800;
-    box-shadow: 0 8px 18px rgba(68, 88, 73, 0.05);
 }
 
 .data-section-title span {
@@ -325,19 +264,18 @@ div[data-testid="stTextArea"] textarea {
     padding: 0.85rem 1rem;
     border-radius: 8px;
     border: 1px solid rgba(38, 83, 59, 0.14);
-    background: rgba(255, 255, 255, 0.72);
+    background: #ffffff;
     color: #213b30;
-    box-shadow: 0 10px 24px rgba(68, 88, 73, 0.06);
 }
 
 .data-check-card.ok {
     border-color: rgba(37, 118, 76, 0.28);
-    background: rgba(232, 246, 234, 0.76);
+    background: #e8f6ea;
 }
 
 .data-check-card.warn {
     border-color: rgba(197, 97, 40, 0.25);
-    background: rgba(255, 244, 226, 0.78);
+    background: #fff4e2;
 }
 
 .data-check-card strong {
@@ -369,9 +307,8 @@ RESULT_STYLE = """
     min-height: 4.2rem;
     padding: 0.85rem 0.95rem;
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.84);
+    background: #ffffff;
     border: 1px solid rgba(38, 83, 59, 0.12);
-    box-shadow: 0 10px 24px rgba(68, 88, 73, 0.07);
 }
 
 .uncertainty-icon {

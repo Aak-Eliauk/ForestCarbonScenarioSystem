@@ -14,7 +14,7 @@ from fcscs.services.quick_run_service import build_quick_config
 STATUS_FILE_NAME = "run_status.json"
 
 
-# 后台运行服务负责创建批次目录、启动子进程并记录状态。
+# 后台运行服务负责创建批次目录、启动子进程并记录状态
 
 
 def get_batch_output_dir(config, create=True):
@@ -55,7 +55,7 @@ def start_background_run(config, run_mode, quick_size):
         },
     )
 
-    # 子进程需要能找到src目录下的fcscs包，所以这里补上PYTHONPATH。
+    # 子进程需要能找到src目录下的fcscs包，所以这里补上PYTHONPATH
     project_root = Path(__file__).resolve().parents[3]
     src_dir = project_root / "src"
     env = os.environ.copy()
@@ -101,16 +101,19 @@ def start_background_run(config, run_mode, quick_size):
 
 
 def write_status(status_path, status):
-    # 状态文件用于页面刷新后继续读取进度。
     status_path = Path(status_path)
     status_path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(status)
     data["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _save_status_file(status_path, data)
+    _append_run_log(data)
+
+
+def _save_status_file(status_path, data):
     temp_path = status_path.with_suffix(".tmp")
     with open(temp_path, "w", encoding="utf-8") as file:
         json.dump(data, file, ensure_ascii=False, indent=2)
     temp_path.replace(status_path)
-    _append_run_log(data)
 
 
 def _append_run_log(status):
@@ -141,19 +144,69 @@ def _build_log_line(status):
 
 
 def read_status(status_path):
-    # 找不到或读坏状态文件时返回空字典，避免页面直接报错。
     status_path = Path(status_path)
     if not status_path.exists():
         return {}
     try:
         with open(status_path, "r", encoding="utf-8") as file:
-            return json.load(file)
+            status = json.load(file)
     except Exception:
         return {}
+    return _mark_dead_process_as_failed(status_path, status)
+
+
+def _mark_dead_process_as_failed(status_path, status):
+    state = str(status.get("state", ""))
+    if state not in {"starting", "running"}:
+        return status
+
+    pid = status.get("pid")
+    if pid is None:
+        return status
+    if _process_is_alive(pid):
+        return status
+
+    status["state"] = "failed"
+    status["stage"] = "运行异常结束"
+    status["message"] = "后台进程已经退出，但没有写入完成状态，请查看日志文件中的错误信息。"
+    status["error"] = str(status.get("error", "") or "后台进程异常退出。")
+    status["updated_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    _save_status_file(status_path, status)
+    _append_run_log(status)
+    return status
+
+
+def _process_is_alive(pid):
+    try:
+        pid = int(pid)
+    except Exception:
+        return True
+
+    if os.name == "nt":
+        try:
+            import ctypes
+
+            access = 0x1000
+            still_active = 259
+            handle = ctypes.windll.kernel32.OpenProcess(access, False, pid)
+            if not handle:
+                return False
+            exit_code = ctypes.c_ulong()
+            ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return bool(ok) and int(exit_code.value) == still_active
+        except Exception:
+            return True
+
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def find_recent_jobs(output_dir, limit=10):
-    # 输出目录下每个批次都有一个run_status.json。
+    # 输出目录下每个批次都有一个run_status.json
     output_dir = Path(output_dir)
     if not output_dir.exists():
         return []
@@ -172,7 +225,7 @@ def find_recent_jobs(output_dir, limit=10):
 
 
 def terminate_background_run(status_path):
-    # 终止时优先杀掉记录的进程号，再把状态写回文件。
+    # 终止时优先杀掉记录的进程号，再把状态写回文件
     status_path = Path(status_path)
     status = read_status(status_path)
     if not status:

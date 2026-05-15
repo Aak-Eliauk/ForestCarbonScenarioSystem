@@ -14,9 +14,9 @@ def main():
     config_path = sys.argv[1]
     status_path = sys.argv[2]
     run_mode = sys.argv[3]
-    config = ScenarioConfig.from_yaml(config_path)
 
     try:
+        config = ScenarioConfig.from_yaml(config_path)
         _update(status_path, "running", 5, "读取配置", "后台进程已读取运行配置。")
 
         result = run_simulation_workflow(
@@ -47,6 +47,7 @@ def main():
         status["raster_dir"] = str(batch_dir / "raster_predictions")
         status["output_files"] = result.report_bundle.output_files
         write_status(status_path, status)
+        return 0
     except Exception as error:
         status = read_status(status_path)
         status["state"] = "failed"
@@ -55,7 +56,7 @@ def main():
         status["message"] = str(error)
         status["error"] = traceback.format_exc()
         write_status(status_path, status)
-        raise
+        return 1
 
 
 def _update(status_path, state, percent, stage, message):
@@ -68,4 +69,4 @@ def _update(status_path, state, percent, stage, message):
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
