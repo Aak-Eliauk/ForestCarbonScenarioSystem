@@ -29,4 +29,4 @@ if __name__ == "__main__":
         print("  python run_system.py")
         print("  streamlit run app.py")
         print("")
-        print("直接执行 python app.py 不会启动 Streamlit 网页服务。")
+        print("直接执行python app.py不会启动Streamlit网页服务。")
