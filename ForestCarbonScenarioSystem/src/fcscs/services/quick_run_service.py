@@ -1,4 +1,4 @@
-from fcscs.config.defaults import sanitize_scenario_name
+from fcscs.config.defaults import clean_name
 from fcscs.engines.raster_tools import (
     parse_env_raster_paths,
     parse_year_raster_paths,
@@ -31,7 +31,7 @@ def build_quick_raster_config(config, quick_size):
             optional_items.append(("环境因子-" + name, path_text))
     validate_raster_alignment(required_items + optional_items, "快速测试栅格")
 
-    batch_dir = sanitize_scenario_name(str(config.batch_name) + "_快速测试", default="运行批次")
+    batch_dir = clean_name(str(config.batch_name) + "_快速测试", default="运行批次")
     output_dir = resolve_output_dir(config.output_dir) / batch_dir / "quick_test_inputs"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -63,7 +63,7 @@ def build_quick_raster_config(config, quick_size):
     history_lulc_text = _clip_year_rasters(config.history_lulc_paths, output_dir / "history_lulc", window, rasterio)
 
     quick_config = config.copy()
-    quick_config.scenario_name = sanitize_scenario_name(config.scenario_name + "_quick_test")
+    quick_config.scenario_name = clean_name(config.scenario_name + "_quick_test")
     quick_config.batch_name = batch_dir
     quick_config.agbd_raster_path = str(clipped_paths["agbd"])
     quick_config.tcc_raster_path = str(clipped_paths["tcc"])

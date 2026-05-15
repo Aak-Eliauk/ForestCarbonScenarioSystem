@@ -3,7 +3,7 @@ import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 
-from fcscs.config.defaults import sanitize_scenario_name
+from fcscs.config.defaults import clean_name
 from fcscs.domain.models import ReportBundle, SimulationBundle
 from fcscs.engines.raster_tools import (
     parse_code_list,
@@ -850,7 +850,7 @@ class AGBDModelEngine:
         return env_map
 
     def _build_raster_output_dir(self, config):
-        batch_dir = sanitize_scenario_name(config.batch_name, default="运行批次")
+        batch_dir = clean_name(config.batch_name, default="运行批次")
         output_dir = resolve_output_dir(config.output_dir) / batch_dir / "raster_predictions"
         output_dir.mkdir(parents=True, exist_ok=True)
         return output_dir

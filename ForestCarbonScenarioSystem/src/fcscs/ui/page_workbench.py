@@ -5,7 +5,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from fcscs.config.defaults import ScenarioConfig, build_default_batch_name, build_preset_config, list_preset_names, sanitize_scenario_name
+from fcscs.config.defaults import ScenarioConfig, build_batch_name, build_preset_config, clean_name, list_preset_names
 from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists, resolve_input_path
 from fcscs.services.background_run_service import find_recent_jobs, read_status, start_background_run, terminate_background_run
 from fcscs.ui.app_state import (
@@ -72,7 +72,7 @@ def _ensure_wizard_state():
 def _refresh_run_batch_name_when_opening_step(config, step_index):
     previous_step = st.session_state.get(LAST_RENDER_STEP_KEY)
     if step_index == 2 and previous_step != 2:
-        st.session_state["wizard_batch_name"] = build_default_batch_name(config.scenario_name)
+        st.session_state["wizard_batch_name"] = build_batch_name(config.scenario_name)
     st.session_state[LAST_RENDER_STEP_KEY] = step_index
 
 
@@ -460,7 +460,7 @@ def _render_scenario_step(current):
                 return
 
             new_config = current.copy()
-            new_config.scenario_name = sanitize_scenario_name(scenario_name)
+            new_config.scenario_name = clean_name(scenario_name)
             new_config.base_year = int(base_year)
             new_config.target_year = int(target_year)
             new_config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
@@ -534,10 +534,10 @@ def _render_run_step(config):
     running_count = len(running_jobs)
 
     if "wizard_batch_name" not in st.session_state:
-        st.session_state["wizard_batch_name"] = build_default_batch_name(config.scenario_name)
+        st.session_state["wizard_batch_name"] = build_batch_name(config.scenario_name)
     batch_name = st.text_input("运行批次名", key="wizard_batch_name")
     batch_preview_config = config.copy()
-    batch_preview_config.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name(config.scenario_name))
+    batch_preview_config.batch_name = clean_name(batch_name, default=build_batch_name(config.scenario_name))
     batch_dir = get_batch_output_directory(batch_preview_config, create=False)
     st.caption("本次结果将保存到：" + str(batch_dir))
     if batch_dir.exists():
@@ -633,13 +633,13 @@ def _render_run_complete_actions():
 
 def _prepare_run_config(config, batch_name):
     run_config = config.copy()
-    safe_batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name(config.scenario_name))
+    safe_batch_name = clean_name(batch_name, default=build_batch_name(config.scenario_name))
     run_config.batch_name = safe_batch_name
 
     batch_dir = get_batch_output_directory(run_config, create=False)
     if batch_dir.exists():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_config.batch_name = sanitize_scenario_name(safe_batch_name + "_" + timestamp)
+        run_config.batch_name = clean_name(safe_batch_name + "_" + timestamp)
 
     return run_config
 

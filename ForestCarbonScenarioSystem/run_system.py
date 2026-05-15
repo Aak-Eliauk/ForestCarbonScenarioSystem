@@ -24,11 +24,11 @@ def show_name():
 def check_code_files():
     if not APP_CODE.exists():
         print("未找到app.py，请确认脚本放在项目根目录。")
-        exit(1)
+        quit(1)
 
     if not SRC_CODE.exists():
         print("未找到src目录，请确认项目文件完整。")
-        exit(1)
+        quit(1)
 
 
 def check_python_version():
@@ -37,7 +37,7 @@ def check_python_version():
     print(f"Python版本:{major}.{minor}")
     if major < 3:
         print("Python版本过低，请使用Python3。")
-        exit(1)
+        quit(1)
 
 
 def check_required_packages():
@@ -63,15 +63,9 @@ def check_required_packages():
         print("")
         print("请先安装依赖，在当前目录运行：")
         print("python -m pip install -r requirements.txt")
-        exit(1)
+        quit(1)
 
     print("依赖检查:通过")
-
-    #代码src目录加入py导入路径，确保正常读取项目代码
-def add_code_path():
-    src_text = str(SRC_CODE)
-    if src_text not in sys.path:
-        sys.path.insert(0, src_text)
 
 
 def print_run_explain(port, url):
@@ -102,7 +96,7 @@ def find_port(target_port):
             return port
         port += 1
     print("8501-8600端口都已被占用，请关闭占用程序后重试。")
-    exit(1)
+    quit(1)
 
 
 def construct_url(port):
@@ -131,10 +125,17 @@ def run_streamlit(port):
         print("")
         print("启动失败：")
         print(error)
-        exit(1)
+        quit(1)
 
 
-def exit(code):
+#代码src目录加入py导入路径，确保正常读取项目代码
+def add_code_path():
+    src_text = str(SRC_CODE)
+    if src_text not in sys.path:
+        sys.path.insert(0, src_text)
+
+
+def quit(code):
     print("")
     try:
         input("按回车键退出...")
@@ -150,12 +151,10 @@ def main():
     add_code_path()
     port = find_port(PORT)
     url = construct_url(port)
-
     if "--check" in sys.argv:
         print(f"默认输出目录:{DEFAULT_OUTPUT}")
         print("启动检查完成。")
         return
-
     print_run_explain(port, url)
     run_streamlit(port)
 

@@ -1,37 +1,13 @@
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
 
 import yaml
 
 
-INVALID_SCENARIO_NAME_CHARS = set('<>:"/\\|?*')
-WINDOWS_RESERVED_NAMES = {
-    "CON",
-    "PRN",
-    "AUX",
-    "NUL",
-    "COM1",
-    "COM2",
-    "COM3",
-    "COM4",
-    "COM5",
-    "COM6",
-    "COM7",
-    "COM8",
-    "COM9",
-    "LPT1",
-    "LPT2",
-    "LPT3",
-    "LPT4",
-    "LPT5",
-    "LPT6",
-    "LPT7",
-    "LPT8",
-    "LPT9",
-}
-
-
+BAD_NAME_CHARS = '<>:"/\\|?*'
+BAD_WINDOWS_NAMES = ["CON", "PRN", "AUX", "NUL"]
 DEFAULT_HISTORY_YEARS = [2017, 2018, 2019, 2020, 2021, 2022]
+
 DEFAULT_ENV_RASTER_PATHS = (
     "slope=../data/environmentFactors/地形/Hubei_Slope.tif\n"
     "moisture=../data/environmentFactors/温度降水/Hubei_MAP_2000_2022.tif\n"
@@ -46,43 +22,52 @@ DEFAULT_ENV_RASTER_PATHS = (
 )
 
 
-def build_default_year_paths(folder_name, file_prefix):
+def build_year_paths(folder_name, file_prefix):
     lines = []
     for year in DEFAULT_HISTORY_YEARS:
-        lines.append(f"{year}=../data/{folder_name}/{file_prefix}_{year}.tif")
+        line = str(year) + "=../data/" + folder_name + "/" + file_prefix + "_" + str(year) + ".tif"
+        lines.append(line)
     return "\n".join(lines)
 
 
-def sanitize_scenario_name(value, default="基准情景", max_length=80):
+def clean_name(value, default="基准情景", max_length=80):
     text = str(value).strip()
-    if not text:
+    if text == "":
         text = str(default)
 
-    safe_chars = []
+    result = ""
     for char in text:
-        if ord(char) < 32 or char in INVALID_SCENARIO_NAME_CHARS:
-            safe_chars.append("_")
+        if ord(char) < 32:
+            result = result + "_"
+        elif char in BAD_NAME_CHARS:
+            result = result + "_"
         else:
-            safe_chars.append(char)
+            result = result + char
 
-    safe_name = "".join(safe_chars)
-    while ".." in safe_name:
-        safe_name = safe_name.replace("..", "_")
-    safe_name = safe_name.strip(" ._")
+    while ".." in result:
+        result = result.replace("..", "_")
 
-    if not safe_name:
-        safe_name = str(default)
-    if safe_name.upper() in WINDOWS_RESERVED_NAMES:
-        safe_name = safe_name + "_scenario"
-    if len(safe_name) > max_length:
-        safe_name = safe_name[:max_length].rstrip(" ._")
-    return safe_name or str(default)
+    result = result.strip(" ._")
+    if result == "":
+        result = str(default)
+
+    if result.upper() in BAD_WINDOWS_NAMES:
+        result = result + "_scenario"
+
+    if len(result) > max_length:
+        result = result[:max_length]
+        result = result.strip(" ._")
+
+    if result == "":
+        result = str(default)
+
+    return result
 
 
-def build_default_batch_name(scenario_name="运行批次"):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    clean_scenario_name = sanitize_scenario_name(scenario_name, default="运行批次", max_length=42)
-    return sanitize_scenario_name(clean_scenario_name + "_" + timestamp, default="运行批次_" + timestamp)
+def build_batch_name(scenario_name="运行批次"):
+    time_text = datetime.now().strftime("%Y%m%d_%H%M%S")
+    clean_text = clean_name(scenario_name, default="运行批次", max_length=42)
+    return clean_name(clean_text + "_" + time_text, default="运行批次_" + time_text)
 
 
 class ScenarioConfig:
@@ -137,19 +122,22 @@ class ScenarioConfig:
         write_raster_outputs=True,
         output_dir="../ForestCarbonScenarioSystem_outputs",
     ):
-        # 基本信息和年份范围
-        self.scenario_name = sanitize_scenario_name(scenario_name)
+        self.scenario_name = clean_name(scenario_name)
+
         if batch_name is None:
-            batch_name = build_default_batch_name(scenario_name)
-        self.batch_name = sanitize_scenario_name(batch_name, default=build_default_batch_name(scenario_name))
+            batch_name = build_batch_name(self.scenario_name)
+        self.batch_name = clean_name(batch_name, default=build_batch_name(self.scenario_name))
+
         self.base_year = int(base_year)
         self.target_year = int(target_year)
+
         if future_years is None:
             self.future_years = self.build_future_years(self.base_year, self.target_year)
         else:
-            self.future_years = [int(year) for year in future_years]
+            self.future_years = []
+            for year in future_years:
+                self.future_years.append(int(year))
 
-        # 情景控制和蒙特卡洛参数
         self.logging_area_reduction = float(logging_area_reduction)
         self.logging_severity_reduction = float(logging_severity_reduction)
         self.logging_severity_cap_quantile = logging_severity_cap_quantile
@@ -158,10 +146,12 @@ class ScenarioConfig:
         self.urban_severity_reduction = float(urban_severity_reduction)
         self.reserve_ratio = float(reserve_ratio)
         self.urban_center_count = int(urban_center_count)
+
         self.logging_patch_min_size = int(logging_patch_min_size)
         self.logging_patch_max_size = int(logging_patch_max_size)
         self.logging_library_years = int(logging_library_years)
         self.logging_library_patch_count = int(logging_library_patch_count)
+
         self.mc_n_simulations = int(mc_n_simulations)
         self.severity_method = str(severity_method).upper()
         self.base_seed = int(base_seed)
@@ -169,27 +159,28 @@ class ScenarioConfig:
         self.grid_cols = int(grid_cols)
         self.agbd_to_agc_factor = float(agbd_to_agc_factor)
         self.pixel_area_ha = float(pixel_area_ha)
+
         self.ml_sample_count = int(ml_sample_count)
         self.ml_n_estimators = int(ml_n_estimators)
         self.ml_max_depth = int(ml_max_depth)
 
-        # 历史栅格默认按年份连续填写
         if history_agbd_paths is None:
-            history_agbd_paths = build_default_year_paths("AGBD", "Hubei_AGB")
+            history_agbd_paths = build_year_paths("AGBD", "Hubei_AGB")
         if history_tcc_paths is None:
-            history_tcc_paths = build_default_year_paths("TCC", "Hubei_TCC")
+            history_tcc_paths = build_year_paths("TCC", "Hubei_TCC")
         if history_lulc_paths is None:
-            history_lulc_paths = build_default_year_paths("LULC", "Hubei_LULC")
+            history_lulc_paths = build_year_paths("LULC", "Hubei_LULC")
+
         self.history_agbd_paths = str(history_agbd_paths)
         self.history_tcc_paths = str(history_tcc_paths)
         self.history_lulc_paths = str(history_lulc_paths)
+
         self.use_driver_sample_weight = bool(use_driver_sample_weight)
         self.logging_probability_band = int(logging_probability_band)
         self.urban_probability_band = int(urban_probability_band)
         self.driver_probability_scale = float(driver_probability_scale)
         self.severity_sample_count = int(severity_sample_count)
 
-        # 栅格路径和分类编码
         self.agbd_raster_path = str(agbd_raster_path)
         self.tcc_raster_path = str(tcc_raster_path)
         self.lulc_base_raster_path = str(lulc_base_raster_path)
@@ -197,20 +188,21 @@ class ScenarioConfig:
         self.drivers_raster_path = str(drivers_raster_path)
         self.reserve_raster_path = str(reserve_raster_path)
         self.env_raster_paths = str(env_raster_paths)
+
         self.forest_lulc_codes = str(forest_lulc_codes)
         self.urban_lulc_codes = str(urban_lulc_codes)
         self.logging_driver_value = int(logging_driver_value)
         self.reserve_value = int(reserve_value)
+
         self.write_raster_outputs = bool(write_raster_outputs)
         self.output_dir = str(output_dir)
 
-    @staticmethod
-    def build_future_years(base_year, target_year):
+    def build_future_years(self, base_year, target_year):
         years = []
         year = int(base_year) + 1
         while year <= int(target_year):
             years.append(year)
-            year += 1
+            year = year + 1
         return years
 
     def to_dict(self):
@@ -219,24 +211,35 @@ class ScenarioConfig:
         return data
 
     def copy(self):
-        return ScenarioConfig(**self.to_dict())
+        data = self.to_dict()
+        return ScenarioConfig(**data)
 
     def save_yaml(self, path):
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        folder = path.parent
+        folder.mkdir(parents=True, exist_ok=True)
+        data = self.to_dict()
         with open(path, "w", encoding="utf-8") as file:
-            yaml.safe_dump(self.to_dict(), file, allow_unicode=True, sort_keys=False)
+            yaml.safe_dump(data, file, allow_unicode=True, sort_keys=False)
         return path
 
     @classmethod
     def from_yaml(cls, path):
         with open(path, "r", encoding="utf-8") as file:
-            data = yaml.safe_load(file) or {}
+            data = yaml.safe_load(file)
+        if data is None:
+            data = {}
         return cls(**data)
 
 
 def list_preset_names():
-    return ["基准情景", "生态保育", "城镇控制", "采伐控制", "平衡发展"]
+    names = []
+    names.append("基准情景")
+    names.append("生态保育")
+    names.append("城镇控制")
+    names.append("采伐控制")
+    names.append("平衡发展")
+    return names
 
 
 def build_preset_config(preset_name):

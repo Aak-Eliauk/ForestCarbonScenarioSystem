@@ -6,7 +6,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fcscs.config.defaults import sanitize_scenario_name
+from fcscs.config.defaults import clean_name
 from fcscs.engines.raster_tools import resolve_output_dir
 from fcscs.services.quick_run_service import build_quick_config
 
@@ -18,7 +18,7 @@ STATUS_FILE_NAME = "run_status.json"
 
 
 def get_batch_output_dir(config, create=True):
-    batch_name = sanitize_scenario_name(config.batch_name, default="运行批次")
+    batch_name = clean_name(config.batch_name, default="运行批次")
     batch_dir = resolve_output_dir(config.output_dir) / batch_name
     if create:
         batch_dir.mkdir(parents=True, exist_ok=True)
