@@ -98,7 +98,8 @@ def find_port(target_port):
 
 
 def construct_url(port):
-    return f"http://{HOST}:{int(port)}"
+    url = f"http://{HOST}:{int(port)}"
+    return url
 
 
 def run_streamlit(port):

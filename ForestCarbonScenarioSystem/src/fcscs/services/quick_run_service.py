@@ -1,15 +1,16 @@
-﻿from fcscs.config.defaults import name_clean
+from fcscs.config.defaults import name_clean
 from fcscs.engines.raster_tools import (
-    parse_envs,
-    parse_years,
-    find_path,
+    deconstruct_envs,
+    deconstruct_years,
+    construct_path,
     get_out_dir,
-    check_rasters,
+    check_rasterAndalign,
 )
 
 
 def build_quick_config(config, quick_size):
-    return build_quick_raster_config(config, quick_size)
+    quick_config = build_quick_raster_config(config, quick_size)
+    return quick_config
 
 
 def build_quick_raster_config(config, quick_size):
@@ -25,20 +26,20 @@ def build_quick_raster_config(config, quick_size):
         ("保护区", config.reserve_raster_path),
     ]
     optional_items = []
-    for name, path_text in parse_envs(config.env_raster_paths):
-        if find_path(path_text).exists():
-            optional_items.append(("环境因子-" + name, path_text))
-    check_rasters(required_items + optional_items, "快速测试栅格")
+    for name, path_in in deconstruct_envs(config.env_raster_paths):
+        if construct_path(path_in).exists():
+            optional_items.append(("环境因子-" + name, path_in))
+    check_rasterAndalign(required_items + optional_items, "快速测试栅格")
 
-    batch_dir = name_clean(str(config.batch_name) + "_快速测试", default="运行批次")
+    batch_dir = name_clean(config.batch_name + "_快速测试", default="运行批次")
     out_dir = get_out_dir(config.output_dir) / batch_dir / "quick_test_inputs"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    agbd_path = find_path(config.agbd_raster_path)
-    lulc_base_path = find_path(config.lulc_base_raster_path)
-    lulc_target_path = find_path(config.lulc_target_raster_path)
-    drivers_path = find_path(config.drivers_raster_path)
-    reserve_path = find_path(config.reserve_raster_path)
+    agbd_path = construct_path(config.agbd_raster_path)
+    lulc_base_path = construct_path(config.lulc_base_raster_path)
+    lulc_target_path = construct_path(config.lulc_target_raster_path)
+    drivers_path = construct_path(config.drivers_raster_path)
+    reserve_path = construct_path(config.reserve_raster_path)
 
     with rasterio.open(agbd_path) as src:
         rows = src.height
@@ -124,7 +125,7 @@ def _pick_quick_window(lulc_base_path, lulc_target_path, drivers_path, reserve_p
 
 
 def _clip_one_raster(source_path, output_path, raster_window, rasterio):
-    source_path = find_path(source_path)
+    source_path = construct_path(source_path)
     with rasterio.open(source_path) as src:
         data = src.read(1, window=raster_window)
         profile = src.profile.copy()
@@ -135,7 +136,7 @@ def _clip_one_raster(source_path, output_path, raster_window, rasterio):
 
 
 def _clip_all_bands_raster(source_path, output_path, raster_window, rasterio):
-    source_path = find_path(source_path)
+    source_path = construct_path(source_path)
     with rasterio.open(source_path) as src:
         data = src.read(window=raster_window)
         profile = src.profile.copy()
@@ -147,46 +148,50 @@ def _clip_all_bands_raster(source_path, output_path, raster_window, rasterio):
 
 def _clip_env_rasters(env_text, out_dir, raster_window, rasterio):
     lines = []
-    env_items = parse_envs(env_text)
-    for name, path_text in env_items:
-        if not find_path(path_text).exists():
+    env_items = deconstruct_envs(env_text)
+    for name, path_in in env_items:
+        if not construct_path(path_in).exists():
             continue
         output_path = out_dir / ("env_" + _safe_file_name(name) + ".tif")
-        _clip_one_raster(path_text, output_path, raster_window, rasterio)
+        _clip_one_raster(path_in, output_path, raster_window, rasterio)
         lines.append(name + "=" + str(output_path))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return text
 
 
 def _clip_year_rasters(year_text, out_dir, raster_window, rasterio):
     lines = []
     out_dir.mkdir(parents=True, exist_ok=True)
-    year_items = parse_years(year_text)
+    year_items = deconstruct_years(year_text)
     for year in sorted(year_items.keys()):
-        path_text = year_items[year]
-        if not find_path(path_text).exists():
+        path_in = year_items[year]
+        if not construct_path(path_in).exists():
             continue
         output_path = out_dir / (str(year) + ".tif")
-        _clip_one_raster(path_text, output_path, raster_window, rasterio)
+        _clip_one_raster(path_in, output_path, raster_window, rasterio)
         lines.append(str(year) + "=" + str(output_path))
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return text
 
 
 def _safe_file_name(name):
     result = []
-    for char in str(name):
+    for char in name:
         if char.isalnum() or char in ["_", "-"]:
             result.append(char)
         else:
             result.append("_")
-    return "".join(result) or "env"
+    name_out = "".join(result) or "env"
+    return name_out
 
 
 def _parse_simple_codes(text, default_values):
     result = []
-    for part in str(text).split(","):
+    for part in text.split(","):
         clean = part.strip()
         if clean:
             result.append(int(float(clean)))
     if result:
         return result
-    return list(default_values)
+    values = list(default_values)
+    return values

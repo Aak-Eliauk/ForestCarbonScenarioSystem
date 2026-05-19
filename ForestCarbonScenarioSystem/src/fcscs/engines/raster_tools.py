@@ -3,35 +3,37 @@ import numpy as np
 import rasterio
 
 
-def find_path(path_text):
-    path = Path(str(path_text))
+def construct_path(path_in):
+    path = Path(path_in)
     if path.is_absolute():
         return path
 
     project_root = Path(__file__).resolve().parents[3]
-    return project_root / path
+    path_out = project_root / path
+    return path_out
 
 
-def get_out_dir(path_text):
-    if path_text is None or str(path_text).strip() == "":
-        path_text = "../ForestCarbonScenarioSystem_outputs"
+def get_out_dir(path_in):
+    if path_in is None or path_in.strip() == "":
+        path_in = "../ForestCarbonScenarioSystem_outputs"
 
-    path = Path(str(path_text))
+    path = Path(path_in)
     if path.is_absolute():
         return path
 
     project_root = Path(__file__).resolve().parents[3]
-    return project_root / path
+    path_out = project_root / path
+    return path_out
 
 
-def read_grid(path_text, make_float=False):
-    path = find_path(path_text)
+def read_grid(path_in, to_float=False):
+    path = construct_path(path_in)
     with rasterio.open(path) as src:
         data = src.read(1)
         profile = src.profile.copy()
         nodata = src.nodata
 
-    if make_float:
+    if to_float:
         data = data.astype(np.float32)
         if nodata is not None:
             data[data == np.float32(nodata)] = np.nan
@@ -39,14 +41,14 @@ def read_grid(path_text, make_float=False):
     return data, profile
 
 
-def read_band(path_text, band=1, make_float=False):
-    path = find_path(path_text)
+def read_band(path_in, band=1, to_float=False):
+    path = construct_path(path_in)
     with rasterio.open(path) as src:
-        data = src.read(int(band))
+        data = src.read(band)
         profile = src.profile.copy()
         nodata = src.nodata
 
-    if make_float:
+    if to_float:
         data = data.astype(np.float32)
         if nodata is not None:
             data[data == np.float32(nodata)] = np.nan
@@ -54,26 +56,27 @@ def read_band(path_text, band=1, make_float=False):
     return data, profile
 
 
-def read_meta(path_text):
-    path = find_path(path_text)
+def read_meta(path_in):
+    path = construct_path(path_in)
     with rasterio.open(path) as src:
-        return {
+        data = {
             "path": path,
-            "shape": (int(src.height), int(src.width)),
+            "shape": (src.height, src.width),
         }
+    return data
 
 
-def check_rasters(items, context="栅格"):
+def check_rasterAndalign(items, context="栅格"):
     metadata = []
     missing = []
 
-    for name, path_text in items:
-        if path_text is None or str(path_text).strip() == "":
-            missing.append(f"{name}: {path_text}")
-        elif not find_path(path_text).exists():
-            missing.append(f"{name}: {path_text}")
+    for name, path_in in items:
+        if path_in is None or path_in.strip() == "":
+            missing.append(f"{name}: {path_in}")
+        elif not construct_path(path_in).exists():
+            missing.append(f"{name}: {path_in}")
         else:
-            metadata.append((name, read_meta(path_text)))
+            metadata.append((name, read_meta(path_in)))
 
     if missing:
         raise ValueError(context + "缺少必要文件：\n" + "\n".join(missing))
@@ -94,9 +97,8 @@ def check_rasters(items, context="栅格"):
     return metadata
 
 
-def write_grid(path_text, data, reference_profile, nodata=-9999.0):
-    path = Path(path_text)
-    path.parent.mkdir(parents=True, exist_ok=True)
+def write_grid(path_in, data, reference_profile, nodata=-9999.0):
+    path = Path(path_in)
 
     out_data = data.astype(np.float32).copy()
     out_data[np.isnan(out_data)] = nodata
@@ -113,13 +115,15 @@ def write_grid(path_text, data, reference_profile, nodata=-9999.0):
     return path
 
 
-def parse_codes(text, default_values):
+def deconstruct_codes(text, default_values):
     if text is None:
-        return list(default_values)
+        values = list(default_values)
+        return values
 
-    raw_text = str(text).strip()
+    raw_text = text.strip()
     if raw_text == "":
-        return list(default_values)
+        values = list(default_values)
+        return values
 
     result = []
     parts = raw_text.split(",")
@@ -129,17 +133,18 @@ def parse_codes(text, default_values):
             result.append(int(float(clean_part)))
 
     if not result:
-        return list(default_values)
+        values = list(default_values)
+        return values
 
     return result
 
 
-def parse_envs(text):
+def deconstruct_envs(text):
     result = []
     if text is None:
         return result
 
-    lines = str(text).strip().splitlines()
+    lines = text.strip().splitlines()
     for line in lines:
         clean_line = line.strip()
         if clean_line == "":
@@ -153,20 +158,20 @@ def parse_envs(text):
     return result
 
 
-def parse_years(text):
+def deconstruct_years(text):
     result = {}
     if text is None:
         return result
 
-    lines = str(text).strip().splitlines()
+    lines = text.strip().splitlines()
     for line in lines:
         clean_line = line.strip()
         if clean_line == "":
             continue
-        year_text, path_text = clean_line.split("=", 1)
+        year_text, path = clean_line.split("=", 1)
         year = int(float(year_text.strip()))
-        path_text = path_text.strip()
-        if path_text != "":
-            result[year] = path_text
+        path = path.strip()
+        if path != "":
+            result[year] = path
 
     return result

@@ -1,4 +1,4 @@
-﻿import re
+import re
 from datetime import datetime
 from pathlib import Path
 
@@ -6,7 +6,7 @@ import pandas as pd
 import streamlit as st
 
 from fcscs.config.defaults import ScenarioConfig, construct_batch, build_preset_config, name_clean, list_preset_names
-from fcscs.engines.raster_tools import parse_envs, parse_years, find_path
+from fcscs.engines.raster_tools import deconstruct_envs, deconstruct_years, construct_path
 from fcscs.services.background_run_service import find_recent_jobs, read_status, start_background_run, terminate_background_run
 from fcscs.ui.app_state import (
     get_config,
@@ -1215,7 +1215,7 @@ def _should_skip_path(path):
 
 
 def _get_env_path_by_role(env_text, role):
-    env_items = parse_envs(env_text)
+    env_items = deconstruct_envs(env_text)
     candidate_words = _env_candidate_words(role)
 
     for name, path_text in env_items:
@@ -1229,7 +1229,7 @@ def _get_env_path_by_role(env_text, role):
 
 def _get_extra_env_items(env_text):
     items = []
-    env_items = parse_envs(env_text)
+    env_items = deconstruct_envs(env_text)
     fixed_paths = {
         _get_env_path_by_role(env_text, "terrain"),
         _get_env_path_by_role(env_text, "climate"),
@@ -1414,7 +1414,7 @@ def _render_year_raster_row(row, project_rasters, key_prefix, index):
 
 def _parse_year_path_items(text_value):
     items = []
-    env_items = parse_envs(text_value)
+    env_items = deconstruct_envs(text_value)
     for year_text, path_text in env_items:
         items.append({"year": str(year_text).strip(), "path": str(path_text).strip()})
     return items
@@ -1619,10 +1619,10 @@ def _raster_path_problem(label, path_text):
     text = str(path_text or "").strip()
     if text == "":
         return label + "未填写"
-    suffix = find_path(text).suffix.lower()
+    suffix = construct_path(text).suffix.lower()
     if suffix not in {".tif", ".tiff"}:
         return label + "格式不正确，需要 GeoTIFF（.tif 或 .tiff）"
-    if not find_path(text).exists():
+    if not construct_path(text).exists():
         return label + "文件不存在或路径无法读取"
     return ""
 
@@ -1632,7 +1632,7 @@ def _history_training_ready_detail(config):
     if errors:
         return False, errors[0]
 
-    agbd_paths = parse_years(config.history_agbd_paths)
+    agbd_paths = deconstruct_years(config.history_agbd_paths)
     years = sorted(agbd_paths.keys())
     if not years:
         return False, "历史训练数据未填写"

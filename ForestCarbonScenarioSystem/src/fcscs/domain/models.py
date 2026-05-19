@@ -7,7 +7,8 @@ class EventTable:
         self.records = records
 
     def count(self):
-        return len(self.records)
+        count = len(self.records)
+        return count
 
     def summary(self):
         if self.records.empty:
@@ -39,7 +40,8 @@ class EventTable:
 
     def annual_summary(self):
         if self.records.empty:
-            return pd.DataFrame(columns=["event_type", "year", "count", "severity_mean"])
+            data = pd.DataFrame(columns=["event_type", "year", "count", "severity_mean"])
+            return data
 
         year_map = {}
         for _, row in self.records.iterrows():
@@ -72,7 +74,8 @@ class EventTable:
                     "severity_mean": severity_mean,
                 }
             )
-        return pd.DataFrame(rows)
+        data = pd.DataFrame(rows)
+        return data
 
 
 class SimulationBundle:

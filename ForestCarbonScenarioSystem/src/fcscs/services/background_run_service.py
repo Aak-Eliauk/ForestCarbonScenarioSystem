@@ -117,12 +117,12 @@ def _save_status_file(status_path, data):
 
 
 def _append_run_log(status):
-    log_path_text = status.get("run_log_path")
-    if not log_path_text:
+    log_path_in = status.get("run_log_path")
+    if not log_path_in:
         return
 
     try:
-        log_path = Path(log_path_text)
+        log_path = Path(log_path_in)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         line = _build_log_line(status)
         with open(log_path, "a", encoding="utf-8") as file:
@@ -140,7 +140,8 @@ def _build_log_line(status):
     percent_text = str(status.get("percent", ""))
     stage_text = str(status.get("stage", ""))
     message_text = str(status.get("message", ""))
-    return time_text + " | " + state_text + " | " + percent_text + "% | " + stage_text + " | " + message_text
+    line = time_text + " | " + state_text + " | " + percent_text + "% | " + stage_text + " | " + message_text
+    return line
 
 
 def read_status(status_path):
@@ -152,7 +153,8 @@ def read_status(status_path):
             status = json.load(file)
     except Exception:
         return {}
-    return _mark_dead_process_as_failed(status_path, status)
+    status = _mark_dead_process_as_failed(status_path, status)
+    return status
 
 
 def _mark_dead_process_as_failed(status_path, status):
@@ -194,7 +196,8 @@ def _process_is_alive(pid):
             exit_code = ctypes.c_ulong()
             ok = ctypes.windll.kernel32.GetExitCodeProcess(handle, ctypes.byref(exit_code))
             ctypes.windll.kernel32.CloseHandle(handle)
-            return bool(ok) and int(exit_code.value) == still_active
+            running = bool(ok) and int(exit_code.value) == still_active
+            return running
         except Exception:
             return True
 
@@ -256,7 +259,8 @@ def terminate_background_run(status_path):
         else:
             os.kill(pid, signal.SIGTERM)
     except Exception as error:
-        return False, "终止进程失败：" + str(error)
+        message = "终止进程失败：" + str(error)
+        return False, message
 
     status["state"] = "stopped"
     status["stage"] = "已终止"

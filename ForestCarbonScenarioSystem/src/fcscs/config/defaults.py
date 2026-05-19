@@ -160,7 +160,8 @@ class ScenarioConfig:
 
     def copy(self):
         data = self.to_dict()
-        return ScenarioConfig(**data)
+        config = ScenarioConfig(**data)
+        return config
 
     def save_yaml(self, path):
         path = Path(path)
@@ -177,7 +178,8 @@ class ScenarioConfig:
             data = yaml.safe_load(file)
         if data is None:
             data = {}
-        return cls(**data)
+        config = cls(**data)
+        return config
 
 
 def construct_year_file(folder_name, file_prefix):
@@ -185,7 +187,8 @@ def construct_year_file(folder_name, file_prefix):
     for year in HISTORY_YEARS:
         line = str(year) + "=../data/" + folder_name + "/" + file_prefix + "_" + str(year) + ".tif"
         lines.append(line)
-    return "\n".join(lines)
+    text = "\n".join(lines)
+    return text
 
 
 def name_clean(value, default="情景", max_length=80):
@@ -210,17 +213,19 @@ def name_clean(value, default="情景", max_length=80):
 def construct_batch(scenario_name="运行批次"):
     time_text = datetime.now().strftime("%Y%m%d_%H%M%S")
     clean_text = name_clean(scenario_name, default="运行批次", max_length=42)
-    return name_clean(clean_text + "_" + time_text, default="运行批次_" + time_text)
+    batch_name = name_clean(clean_text + "_" + time_text, default="运行批次_" + time_text)
+    return batch_name
 
 
 
 def list_preset_names():
-    return ["基准情景", "生态保育", "城镇控制", "采伐控制", "平衡发展"]
+    names = ["基准情景", "生态保育", "城镇控制", "采伐控制", "平衡发展"]
+    return names
 
 
 def build_preset_config(preset_name):
     if preset_name == "生态保育":
-        return ScenarioConfig(
+        config = ScenarioConfig(
             scenario_name="生态保育",
             logging_area_reduction=0.35,
             logging_severity_reduction=0.20,
@@ -234,9 +239,10 @@ def build_preset_config(preset_name):
             logging_library_patch_count=200,
             base_seed=123,
         )
+        return config
 
     if preset_name == "城镇控制":
-        return ScenarioConfig(
+        config = ScenarioConfig(
             scenario_name="城镇控制",
             urban_area_reduction=0.40,
             urban_severity_reduction=0.25,
@@ -248,9 +254,10 @@ def build_preset_config(preset_name):
             logging_library_patch_count=180,
             base_seed=56,
         )
+        return config
 
     if preset_name == "采伐控制":
-        return ScenarioConfig(
+        config = ScenarioConfig(
             scenario_name="采伐控制",
             logging_area_reduction=0.45,
             logging_severity_reduction=0.30,
@@ -261,9 +268,10 @@ def build_preset_config(preset_name):
             logging_library_patch_count=220,
             base_seed=77,
         )
+        return config
 
     if preset_name == "平衡发展":
-        return ScenarioConfig(
+        config = ScenarioConfig(
             scenario_name="平衡发展",
             logging_area_reduction=0.15,
             logging_severity_reduction=0.10,
@@ -277,5 +285,7 @@ def build_preset_config(preset_name):
             logging_library_patch_count=180,
             base_seed=88,
         )
+        return config
 
-    return ScenarioConfig()
+    config = ScenarioConfig()
+    return config

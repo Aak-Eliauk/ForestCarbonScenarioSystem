@@ -1,15 +1,15 @@
-﻿import numpy as np
+import numpy as np
 import pandas as pd
 
 from fcscs.domain.models import EventTable
 from fcscs.engines.raster_tools import (
-    parse_codes,
-    parse_envs,
-    parse_years,
-    find_path,
+    deconstruct_codes,
+    deconstruct_envs,
+    deconstruct_years,
+    construct_path,
     read_grid,
     read_band,
-    check_rasters,
+    check_rasterAndalign,
 )
 
 
@@ -22,7 +22,8 @@ class ScenarioEngine:
 
     def generate_all_events(self, config):
         self._check_config(config)
-        return self._generate_all_events_from_rasters(config)
+        events = self._generate_all_events_from_rasters(config)
+        return events
 
     def _generate_all_events_from_rasters(self, config):
         # 读取基准年和目标年LULC后，先判断森林、城镇和保护区范围
@@ -37,8 +38,8 @@ class ScenarioEngine:
         config.grid_cols = int(cols)
 
         reserve_mask = self._build_raster_reserve_mask(config, lulc_base.shape)
-        forest_codes = parse_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
-        urban_codes = parse_codes(config.urban_lulc_codes, [8, 9])
+        forest_codes = deconstruct_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = deconstruct_codes(config.urban_lulc_codes, [8, 9])
 
         forest_base = np.isin(lulc_base, forest_codes)
         forest_target = np.isin(lulc_target, forest_codes)
@@ -79,11 +80,11 @@ class ScenarioEngine:
             ("保护区", config.reserve_raster_path),
         ]
         optional_items = []
-        for name, path_text in parse_envs(config.env_raster_paths):
-            if find_path(path_text).exists():
-                optional_items.append(("环境因子-" + name, path_text))
+        for name, path_in in deconstruct_envs(config.env_raster_paths):
+            if construct_path(path_in).exists():
+                optional_items.append(("环境因子-" + name, path_in))
 
-        check_rasters(required_items + optional_items, "真实栅格模式")
+        check_rasterAndalign(required_items + optional_items, "真实栅格模式")
 
     def _build_raster_reserve_mask(self, config, shape):
         reserve, _ = read_grid(config.reserve_raster_path)
@@ -106,7 +107,8 @@ class ScenarioEngine:
         self.last_patch_library = patch_library
 
         records = patch_library.sample_future_events(config, rng, reserve_mask, target_count)
-        return EventTable("logging", records)
+        event_table = EventTable("logging", records)
+        return event_table
 
     def _generate_raster_urban_conv_events(self, config, rng, forest_base, urban_target, reserve_mask, logging_pixels):
         # 城镇转换基准年是森林、目标年变为城镇的像元
@@ -115,7 +117,8 @@ class ScenarioEngine:
         raw_count = len(rows)
 
         if raw_count == 0:
-            return EventTable("urban_conv", self._empty_event_frame())
+            event_table = EventTable("urban_conv", self._empty_event_frame())
+            return event_table
 
         keep_count = int(raw_count * (1 - config.urban_area_reduction))
         if keep_count < 0:
@@ -124,7 +127,8 @@ class ScenarioEngine:
             keep_count = raw_count
 
         if keep_count == 0:
-            return EventTable("urban_conv", self._empty_event_frame())
+            event_table = EventTable("urban_conv", self._empty_event_frame())
+            return event_table
 
         picked_index = rng.choice(raw_count, size=keep_count, replace=False)
         picked_rows = rows[picked_index]
@@ -149,8 +153,11 @@ class ScenarioEngine:
             )
 
         if not records:
-            return EventTable("urban_conv", self._empty_event_frame())
-        return EventTable("urban_conv", pd.DataFrame(records))
+            event_table = EventTable("urban_conv", self._empty_event_frame())
+            return event_table
+        data = pd.DataFrame(records)
+        event_table = EventTable("urban_conv", data)
+        return event_table
 
     def _generate_raster_urban_edge_events(
         self,
@@ -205,11 +212,15 @@ class ScenarioEngine:
             )
 
         if not records:
-            return EventTable("urban_edge", self._empty_event_frame())
-        return EventTable("urban_edge", pd.DataFrame(records))
+            event_table = EventTable("urban_edge", self._empty_event_frame())
+            return event_table
+        data = pd.DataFrame(records)
+        event_table = EventTable("urban_edge", data)
+        return event_table
 
     def _empty_event_frame(self):
-        return pd.DataFrame(columns=["pixel_id", "row", "col", "type", "y_event"])
+        data = pd.DataFrame(columns=["pixel_id", "row", "col", "type", "y_event"])
+        return data
 
     def _build_pixel_id_set(self, records):
         pixel_ids = set()
@@ -221,7 +232,8 @@ class ScenarioEngine:
         return pixel_ids
 
     def _build_pixel_id(self, config, row, col):
-        return row * config.grid_cols + col
+        pixel_id = row * config.grid_cols + col
+        return pixel_id
 
     def _get_neighbor_cells(self, row, col, max_rows, max_cols):
         neighbors = []
@@ -328,7 +340,8 @@ class LoggingPatchLibrary:
         patch_id = 1
         target_count = min(max(int(target_count), 0), self._available_cell_count(reserve_mask))
         if target_count <= 0:
-            return pd.DataFrame(records)
+            data = pd.DataFrame(records)
+            return data
 
         years = self._pick_future_years(config, rng, target_count)
         max_attempts = max(target_count * 30, len(self.patches) * 20, 300)
@@ -370,12 +383,14 @@ class LoggingPatchLibrary:
                 "采伐事件生成失败：可用网格不足或斑块尺寸过大，"
                 f"目标像元 {target_count}，已放置 {len(records)}。"
             )
-        return pd.DataFrame(records)
+        data = pd.DataFrame(records)
+        return data
 
     def _available_cell_count(self, reserve_mask):
         if reserve_mask is None:
             return 0
-        return int(reserve_mask.size - reserve_mask.sum())
+        count = int(reserve_mask.size - reserve_mask.sum())
+        return count
 
     def _pick_future_years(self, config, rng, target_count):
         if target_count <= 0:
@@ -402,8 +417,10 @@ class LoggingPatchLibrary:
     def _pick_one_future_year(self, config, years, rng):
         if years:
             index = int(rng.integers(0, len(years)))
-            return int(years[index])
-        return int(config.base_year + 1)
+            year = int(years[index])
+            return year
+        year = int(config.base_year + 1)
+        return year
 
     def _sample_patch_template(self, rng):
         if not self.patches:
@@ -580,12 +597,16 @@ class RasterLoggingPatchLibrary(LoggingPatchLibrary):
 
 class SeverityEngine:
     def assign_all(self, event_tables, config):
-        return [self.assign(table, config) for table in event_tables]
+        result = []
+        for table in event_tables:
+            result.append(self.assign(table, config))
+        return result
 
     def assign(self, event_table, config):
         records = event_table.records.copy()
         if records.empty:
-            return EventTable(event_table.event_type, records)
+            event_table = EventTable(event_table.event_type, records)
+            return event_table
 
         if "Severity" not in records.columns:
             records["Severity"] = self._build_severity(records, event_table.event_type, config)
@@ -593,7 +614,8 @@ class SeverityEngine:
         records["Severity"] = records["Severity"].astype(float).clip(0.0, 1.0)
         if "Severity_Class" not in records.columns:
             records["Severity_Class"] = records["Severity"].apply(self._classify)
-        return EventTable(event_table.event_type, records)
+        event_table = EventTable(event_table.event_type, records)
+        return event_table
 
     def _build_severity(self, records, event_type, config):
         values = self._sample_empirical_severity(records, event_type, config)
@@ -621,18 +643,19 @@ class SeverityEngine:
             if cap_quantile is not None:
                 cap_value = float(np.quantile(distribution["Severity"].to_numpy(dtype=np.float32), float(cap_quantile)))
                 picked = np.minimum(picked, cap_value)
-        return np.clip(picked, 0.0, 0.95)
+        picked = np.clip(picked, 0.0, 0.95)
+        return picked
 
     def _build_empirical_distribution(self, event_type, config):
-        tcc_paths = parse_years(config.history_tcc_paths)
-        lulc_paths = parse_years(config.history_lulc_paths)
+        tcc_paths = deconstruct_years(config.history_tcc_paths)
+        lulc_paths = deconstruct_years(config.history_lulc_paths)
         years = sorted(set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(years) < 2:
             return None
 
         rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type) + 90)
-        forest_codes = parse_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
-        urban_codes = parse_codes(config.urban_lulc_codes, [8, 9])
+        forest_codes = deconstruct_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = deconstruct_codes(config.urban_lulc_codes, [8, 9])
         samples = []
         max_samples = max(200, int(config.severity_sample_count))
         drivers_class = None
@@ -650,10 +673,10 @@ class SeverityEngine:
             end_year = years[index + 1]
             if int(end_year) - int(start_year) != 1:
                 continue
-            if not find_path(tcc_paths[start_year]).exists() or not find_path(tcc_paths[end_year]).exists():
+            if not construct_path(tcc_paths[start_year]).exists() or not construct_path(tcc_paths[end_year]).exists():
                 continue
-            tcc_start, _ = read_grid(tcc_paths[start_year], make_float=True)
-            tcc_end, _ = read_grid(tcc_paths[end_year], make_float=True)
+            tcc_start, _ = read_grid(tcc_paths[start_year], to_float=True)
+            tcc_end, _ = read_grid(tcc_paths[end_year], to_float=True)
             tcc_start = self._normalize_tcc(tcc_start)
             tcc_end = self._normalize_tcc(tcc_end)
             mask = np.isfinite(tcc_start) & np.isfinite(tcc_end)
@@ -691,7 +714,8 @@ class SeverityEngine:
 
         if not samples:
             return None
-        return pd.DataFrame(samples)
+        data = pd.DataFrame(samples)
+        return data
 
     def _build_logging_history_mask(self, mask, drivers_class, drivers_loss_year, raster_shape, end_year, config):
         if drivers_class is None or drivers_class.shape != raster_shape:
@@ -705,7 +729,7 @@ class SeverityEngine:
     def _build_urban_history_mask(self, mask, lulc_paths, start_year, end_year, raster_shape, event_type, forest_codes, urban_codes):
         if start_year not in lulc_paths or end_year not in lulc_paths:
             return None
-        if not find_path(lulc_paths[start_year]).exists() or not find_path(lulc_paths[end_year]).exists():
+        if not construct_path(lulc_paths[start_year]).exists() or not construct_path(lulc_paths[end_year]).exists():
             return None
         lulc_start, _ = read_grid(lulc_paths[start_year])
         lulc_end, _ = read_grid(lulc_paths[end_year])
@@ -714,10 +738,12 @@ class SeverityEngine:
 
         conv_mask = np.isin(lulc_start, forest_codes) & np.isin(lulc_end, urban_codes)
         if event_type in {"urban_conv", "urban_conversion"}:
-            return mask & conv_mask
+            result = mask & conv_mask
+            return result
 
         edge_mask = self._build_edge_mask(conv_mask, np.isin(lulc_end, forest_codes))
-        return mask & edge_mask
+        result = mask & edge_mask
+        return result
 
     def _append_history_severity_samples(self, samples, mask, tcc_start, tcc_end, env_surfaces, rng, max_samples):
         row_ids, col_ids = np.where(mask)
@@ -743,12 +769,12 @@ class SeverityEngine:
             samples.append(item)
 
     def _load_severity_env_surfaces(self, config, shape):
-        env_items = parse_envs(config.env_raster_paths)
+        env_items = deconstruct_envs(config.env_raster_paths)
         env_map = {}
-        for name, path_text in env_items:
-            if not find_path(path_text).exists():
+        for name, path_in in env_items:
+            if not construct_path(path_in).exists():
                 continue
-            data, _ = read_grid(path_text, make_float=True)
+            data, _ = read_grid(path_in, to_float=True)
             if data.shape != shape:
                 continue
             env_map[name] = self._normalize_env_surface(data)
@@ -774,14 +800,15 @@ class SeverityEngine:
         if high <= low:
             high = low + 1.0
         data = (data - low) / (high - low)
-        return np.clip(data, 0.0, 1.0)
+        data = np.clip(data, 0.0, 1.0)
+        return data
 
     def _add_env_value_to_severity_item(self, item, env_surfaces, row, col):
         for name in ["slope", "moisture", "accessibility"]:
             item[name] = float(env_surfaces[name][row, col])
 
     def _build_future_severity_features(self, records, config):
-        tcc, _ = read_grid(config.tcc_raster_path, make_float=True)
+        tcc, _ = read_grid(config.tcc_raster_path, to_float=True)
         tcc = self._normalize_tcc(tcc)
         env_surfaces = self._load_severity_env_surfaces(config, tcc.shape)
         rows = records["row"].to_numpy(dtype=int)
@@ -793,7 +820,8 @@ class SeverityEngine:
             item = {"TCC_pre": float(tcc[row, col])}
             self._add_env_value_to_severity_item(item, env_surfaces, row, col)
             items.append(item)
-        return pd.DataFrame(items)
+        data = pd.DataFrame(items)
+        return data
 
     def _sample_by_strata(self, distribution, future_features, rng):
         strat_cols = ["TCC_pre", "slope", "moisture", "accessibility"]
@@ -819,7 +847,8 @@ class SeverityEngine:
             if len(pool) == 0:
                 pool = dist["Severity"].to_numpy(dtype=np.float32)
             result.append(float(rng.choice(pool)))
-        return np.asarray(result, dtype=np.float32)
+        result = np.asarray(result, dtype=np.float32)
+        return result
 
     def _adjust_severity_by_environment(self, severity_values, future_features):
         adjusted = severity_values.astype(np.float32).copy()
@@ -835,21 +864,24 @@ class SeverityEngine:
             factor = 1.0 + pressure
             adjusted[index] = adjusted[index] * factor
 
-        return np.clip(adjusted, 0.0, 0.95)
+        adjusted = np.clip(adjusted, 0.0, 0.95)
+        return adjusted
 
     def _normalize_tcc(self, surface):
         result = surface.astype(np.float32).copy()
         max_value = np.nanmax(result)
         if max_value > 1.5:
             result = result / 100.0
-        return np.clip(result, 0.0, 1.0)
+        result = np.clip(result, 0.0, 1.0)
+        return result
 
     def _calculate_severity_value(self, before, after):
         before = float(before)
         after = float(after)
         if before <= 0.05:
             return 0.0
-        return float(np.clip((before - after) / before, 0.0, 0.95))
+        value = float(np.clip((before - after) / before, 0.0, 0.95))
+        return value
 
     def _build_edge_mask(self, conv_mask, forest_mask):
         rows, cols = conv_mask.shape
