@@ -13,34 +13,34 @@ HOST = "localhost"
 PORT = 8501
 FULL_NAME = "森林损失情景控制与蒙特卡洛碳储量模拟系统V1.0"
 
-def show_name():
+def notice():
     print("")
     print(FULL_NAME)
     print("=" * 48)
-    print("系统服务终端，运行时不要关闭！")
+    print("系统服务终端，运行时不要关闭！！！")
     print("")
 
 
-def check_code_files():
+def check_files():
     if not APP_CODE.exists():
-        print("未找到app.py，请确认脚本放在项目根目录。")
-        quit(1)
+        print("未找到app.py，请检查项目核心文件是否完整")
+        exit(1)
 
     if not SRC_CODE.exists():
-        print("未找到src目录，请确认项目文件完整。")
-        quit(1)
+        print("未找到src目录，请检查项目核心文件是否完整")
+        exit(1)
 
 
-def check_python_version():
+def check_python_v():
     major = sys.version_info.major
     minor = sys.version_info.minor
     print(f"Python版本:{major}.{minor}")
     if major < 3:
-        print("Python版本过低，请使用Python3。")
-        quit(1)
+        print("Python版本过低，请安装Python3以上版本")
+        exit(1)
 
 
-def check_required_packages():
+def check_requirements():
     package_names = [
         "streamlit",
         "numpy",
@@ -63,17 +63,15 @@ def check_required_packages():
         print("")
         print("请先安装依赖，在当前目录运行：")
         print("python -m pip install -r requirements.txt")
-        quit(1)
+        exit(1)
 
     print("依赖检查:通过")
 
 
-def print_run_explain(port, url):
+def display_system_start(port, url):
     print("")
-    print("系统运行说明：")
-    print("1.终端同时负责网页界面服务和碳储量后台计算。")
-    print("2.浏览器显示用户界面，事件生成、机器学习和蒙特卡洛计算在这个终端进程里执行。")
-    print("")
+    print("运行提示：")
+    print("终端同时负责系统界面服务和碳储量后台计算，事件生成、机器学习和蒙特卡洛计算在终端进程调用\n")
     if port != PORT:
         print(f"默认端口{PORT}已被占用，改用端口{port}。")
     print(f"正在启动系统:{url}")
@@ -95,8 +93,8 @@ def find_port(target_port):
         if not is_port_open(HOST, port):
             return port
         port += 1
-    print("8501-8600端口都已被占用，请关闭占用程序后重试。")
-    quit(1)
+    print("8501-8600端口都已占用，请关闭占用端口后重试")
+    exit(1)
 
 
 def construct_url(port):
@@ -120,22 +118,22 @@ def run_streamlit(port):
         subprocess.run(command, cwd=str(ROOT_FOLDER))
     except KeyboardInterrupt:
         print("")
-        print("系统已停止。")
+        print("系统已停止")
     except Exception as error:
         print("")
         print("启动失败：")
         print(error)
-        quit(1)
+        exit(1)
 
 
 #代码src目录加入py导入路径，确保正常读取项目代码
-def add_code_path():
+def add_code():
     src_text = str(SRC_CODE)
     if src_text not in sys.path:
         sys.path.insert(0, src_text)
 
 
-def quit(code):
+def exit(code):
     print("")
     try:
         input("按回车键退出...")
@@ -144,18 +142,18 @@ def quit(code):
     raise SystemExit(code)
 
 def main():
-    show_name()
-    check_code_files()
-    check_python_version()
-    check_required_packages()
-    add_code_path()
+    notice()
+    check_files()
+    check_python_v()
+    check_requirements()
+    add_code()
     port = find_port(PORT)
     url = construct_url(port)
     if "--check" in sys.argv:
         print(f"默认输出目录:{DEFAULT_OUTPUT}")
-        print("启动检查完成。")
+        print("启动检查完成")
         return
-    print_run_explain(port, url)
+    display_system_start(port, url)
     run_streamlit(port)
 
 if __name__ == "__main__":

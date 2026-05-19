@@ -1,20 +1,20 @@
-import numpy as np
+﻿import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_absolute_error, r2_score
 
-from fcscs.config.defaults import clean_name
+from fcscs.config.defaults import name_clean
 from fcscs.domain.models import ReportBundle, SimulationBundle
 from fcscs.engines.raster_tools import (
-    parse_code_list,
-    parse_env_raster_paths,
-    parse_year_raster_paths,
-    path_exists,
-    read_raster,
-    read_raster_band,
-    resolve_output_dir,
-    validate_raster_alignment,
-    write_float_raster,
+    parse_codes,
+    parse_envs,
+    parse_years,
+    find_path,
+    read_grid,
+    read_band,
+    get_out_dir,
+    check_rasters,
+    write_grid,
 )
 
 
@@ -156,8 +156,8 @@ class MonteCarloEngine:
         if profile is None:
             return output_files
 
-        output_dir = model_context.get("raster_output_dir")
-        if output_dir is None:
+        out_dir = model_context.get("raster_out_dir")
+        if out_dir is None:
             return output_files
 
         mean_agbd = np.nanmean(agbd_stack, axis=0)
@@ -165,15 +165,15 @@ class MonteCarloEngine:
         q95_agbd = np.nanquantile(agbd_stack, 0.95, axis=0).astype(np.float32)
         mean_agc = mean_agbd * config.agbd_to_agc_factor
 
-        mean_agbd_path = output_dir / "mean_AGBD.tif"
-        q05_agbd_path = output_dir / "q05_AGBD.tif"
-        q95_agbd_path = output_dir / "q95_AGBD.tif"
-        mean_agc_path = output_dir / "mean_AGC.tif"
+        mean_agbd_path = out_dir / "mean_AGBD.tif"
+        q05_agbd_path = out_dir / "q05_AGBD.tif"
+        q95_agbd_path = out_dir / "q95_AGBD.tif"
+        mean_agc_path = out_dir / "mean_AGC.tif"
 
-        write_float_raster(mean_agbd_path, mean_agbd, profile)
-        write_float_raster(q05_agbd_path, q05_agbd, profile)
-        write_float_raster(q95_agbd_path, q95_agbd, profile)
-        write_float_raster(mean_agc_path, mean_agc, profile)
+        write_grid(mean_agbd_path, mean_agbd, profile)
+        write_grid(q05_agbd_path, q05_agbd, profile)
+        write_grid(q95_agbd_path, q95_agbd, profile)
+        write_grid(mean_agc_path, mean_agc, profile)
 
         output_files["mean_AGBD_tif"] = str(mean_agbd_path)
         output_files["q05_AGBD_tif"] = str(q05_agbd_path)
@@ -198,7 +198,7 @@ class AGBDModelEngine:
             "training_sample_df": training_sample_df,
             "baseline_prediction_surface": baseline_prediction_surface,
             "reference_profile": surfaces.get("reference_profile"),
-            "raster_output_dir": surfaces.get("raster_output_dir"),
+            "raster_out_dir": surfaces.get("raster_out_dir"),
         }
 
     def predict_baseline_surface(self, config, surfaces, model, climate_shift=0.0):
@@ -252,9 +252,9 @@ class AGBDModelEngine:
         raise ValueError("历史训练样本为空：请检查历史AGBD、树冠覆盖度、土地利用和森林损失驱动因素栅格。")
 
     def _history_training_ready(self, config):
-        agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
-        tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
-        lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
+        agbd_paths = parse_years(config.history_agbd_paths)
+        tcc_paths = parse_years(config.history_tcc_paths)
+        lulc_paths = parse_years(config.history_lulc_paths)
         common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
             return False
@@ -311,9 +311,9 @@ class AGBDModelEngine:
         return False
 
     def _load_history_rasters(self, config):
-        agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
-        tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
-        lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
+        agbd_paths = parse_years(config.history_agbd_paths)
+        tcc_paths = parse_years(config.history_tcc_paths)
+        lulc_paths = parse_years(config.history_lulc_paths)
         # 三类历史栅格必须有共同年份，后面才可以构造相邻年份样本
         common_years = sorted(set(agbd_paths.keys()) & set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(common_years) < 2:
@@ -325,15 +325,15 @@ class AGBDModelEngine:
         reference_shape = None
 
         for year in common_years:
-            if not path_exists(agbd_paths[year]):
+            if not find_path(agbd_paths[year]).exists():
                 continue
-            if not path_exists(tcc_paths[year]):
+            if not find_path(tcc_paths[year]).exists():
                 continue
-            if not path_exists(lulc_paths[year]):
+            if not find_path(lulc_paths[year]).exists():
                 continue
-            agbd, _ = read_raster(agbd_paths[year], make_float=True)
-            tcc, _ = read_raster(tcc_paths[year], make_float=True)
-            lulc, _ = read_raster(lulc_paths[year])
+            agbd, _ = read_grid(agbd_paths[year], make_float=True)
+            tcc, _ = read_grid(tcc_paths[year], make_float=True)
+            lulc, _ = read_grid(lulc_paths[year])
             tcc = self._normalize_percent_surface(tcc)
             if reference_shape is None:
                 reference_shape = agbd.shape
@@ -351,11 +351,11 @@ class AGBDModelEngine:
         drivers_loss_year = None
         logging_probability = None
         urban_probability = None
-        drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
+        drivers_class, _ = read_band(config.drivers_raster_path, 1)
         if drivers_class.shape != reference_shape:
             raise ValueError("Drivers分类波段尺寸必须和历史训练栅格一致。")
 
-        drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
+        drivers_loss_year, _ = read_band(config.drivers_raster_path, 4)
         if drivers_loss_year.shape != reference_shape:
             raise ValueError("Drivers loss year波段尺寸必须和历史训练栅格一致。")
 
@@ -376,7 +376,7 @@ class AGBDModelEngine:
 
     def _read_driver_probability(self, config, band, shape):
         try:
-            data, _ = read_raster_band(config.drivers_raster_path, int(band), make_float=True)
+            data, _ = read_band(config.drivers_raster_path, int(band), make_float=True)
         except Exception as error:
             raise ValueError("Drivers概率波段读取失败：" + str(error))
         if data.shape != shape:
@@ -392,7 +392,7 @@ class AGBDModelEngine:
     def _build_history_baseline_training_df(self, config, surfaces, history, rng):
         rows = []
         year_pairs = self._build_history_year_pairs(history["years"])
-        forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        forest_codes = parse_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
         max_per_pair = max(20, int(config.ml_sample_count / max(len(year_pairs), 1)))
 
         for start_year, end_year in year_pairs:
@@ -434,8 +434,8 @@ class AGBDModelEngine:
         rows = []
         year_pairs = self._build_history_year_pairs(history["years"])
         max_per_pair = max(20, int(config.ml_sample_count / max(len(year_pairs), 1)))
-        forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
-        urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
+        forest_codes = parse_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = parse_codes(config.urban_lulc_codes, [8, 9])
 
         for start_year, end_year in year_pairs:
             mask = self._build_history_event_mask(config, history, event_type, start_year, end_year, forest_codes, urban_codes)
@@ -716,8 +716,8 @@ class AGBDModelEngine:
 
     def _build_raster_feature_surfaces(self, config, rng):
         self._check_raster_inputs_for_prediction(config)
-        agbd_pre, profile = read_raster(config.agbd_raster_path, make_float=True)
-        tcc_pre, _ = read_raster(config.tcc_raster_path, make_float=True)
+        agbd_pre, profile = read_grid(config.agbd_raster_path, make_float=True)
+        tcc_pre, _ = read_grid(config.tcc_raster_path, make_float=True)
         self._ensure_min_valid_pixels(agbd_pre, "AGBD")
         self._ensure_min_valid_pixels(tcc_pre, "TCC")
         tcc_pre = self._normalize_percent_surface(tcc_pre)
@@ -744,12 +744,12 @@ class AGBDModelEngine:
             "moisture": moisture,
             "accessibility": accessibility,
             "reference_profile": profile,
-            "raster_output_dir": self._build_raster_output_dir(config),
+            "raster_out_dir": self.construct_raster_dir(config),
         }
         env_feature_names = ["slope", "moisture", "accessibility"]
         used_names = set(env_feature_names)
         used_paths = set()
-        for name, path_text in parse_env_raster_paths(config.env_raster_paths):
+        for name, path_text in parse_envs(config.env_raster_paths):
             clean_name = self._clean_feature_name(name)
             if clean_name in used_names:
                 continue
@@ -827,7 +827,7 @@ class AGBDModelEngine:
         return result
 
     def _check_raster_inputs_for_prediction(self, config):
-        validate_raster_alignment(
+        check_rasters(
             [
                 ("AGBD", config.agbd_raster_path),
                 ("TCC", config.tcc_raster_path),
@@ -837,11 +837,11 @@ class AGBDModelEngine:
 
     def _load_env_rasters(self, config, expected_shape):
         env_map = {}
-        env_items = parse_env_raster_paths(config.env_raster_paths)
+        env_items = parse_envs(config.env_raster_paths)
         for name, path in env_items:
-            if not path_exists(path):
+            if not find_path(path).exists():
                 continue
-            data, _ = read_raster(path, make_float=True)
+            data, _ = read_grid(path, make_float=True)
             if data.shape != expected_shape:
                 continue
             if not np.isfinite(data).any():
@@ -849,11 +849,11 @@ class AGBDModelEngine:
             env_map[name] = data
         return env_map
 
-    def _build_raster_output_dir(self, config):
-        batch_dir = clean_name(config.batch_name, default="运行批次")
-        output_dir = resolve_output_dir(config.output_dir) / batch_dir / "raster_predictions"
-        output_dir.mkdir(parents=True, exist_ok=True)
-        return output_dir
+    def construct_raster_dir(self, config):
+        batch_dir = name_clean(config.batch_name, default="运行批次")
+        out_dir = get_out_dir(config.output_dir) / batch_dir / "raster_predictions"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        return out_dir
 
     def _clip_moisture(self, value):
         return float(np.clip(value, 0.10, 0.95))

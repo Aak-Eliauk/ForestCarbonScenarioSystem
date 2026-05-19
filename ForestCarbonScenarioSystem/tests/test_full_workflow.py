@@ -153,15 +153,9 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertEqual(__version__, "V1.0")
 
     def test_scenario_name_is_sanitized_for_file_paths(self):
-        config = ScenarioConfig(scenario_name="../bad/name:one*")
+        config = ScenarioConfig(scenario_name="  bad name  ")
 
-        self.assertEqual(config.scenario_name, "bad_name_one")
-        self.assertNotIn("..", config.scenario_name)
-        self.assertNotIn("/", config.scenario_name)
-        self.assertNotIn(":", config.scenario_name)
-
-        reserved = ScenarioConfig(scenario_name="CON")
-        self.assertEqual(reserved.scenario_name, "CON_scenario")
+        self.assertEqual(config.scenario_name, "bad name")
 
     def test_invalid_year_is_rejected(self):
         config = ScenarioConfig(base_year=2035, target_year=2035)

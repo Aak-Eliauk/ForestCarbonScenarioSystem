@@ -2,7 +2,7 @@ import sys
 import traceback
 
 from fcscs.config.defaults import ScenarioConfig
-from fcscs.services.background_run_service import get_batch_output_dir, read_status, write_status
+from fcscs.services.background_run_service import get_batch_out_dir, read_status, write_status
 from fcscs.services.workflow_service import run_simulation_workflow
 from fcscs.ui.result_views import export_report
 
@@ -31,7 +31,7 @@ def main():
         )
 
         _update(status_path, "running", 92, "保存结果", "正在写出报表和结果索引。")
-        batch_dir = get_batch_output_dir(config, create=True)
+        batch_dir = get_batch_out_dir(config, create=True)
         export_dir = batch_dir / "report_exports"
         export_report(result.report_bundle, export_dir)
 

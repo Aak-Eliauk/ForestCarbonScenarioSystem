@@ -1,16 +1,15 @@
-import numpy as np
+﻿import numpy as np
 import pandas as pd
 
 from fcscs.domain.models import EventTable
 from fcscs.engines.raster_tools import (
-    parse_code_list,
-    parse_env_raster_paths,
-    parse_year_raster_paths,
-    path_exists,
-    read_raster,
-    read_raster_band,
-    rasterio_is_available,
-    validate_raster_alignment,
+    parse_codes,
+    parse_envs,
+    parse_years,
+    find_path,
+    read_grid,
+    read_band,
+    check_rasters,
 )
 
 
@@ -30,16 +29,16 @@ class ScenarioEngine:
         self._check_raster_config(config)
         rng = np.random.default_rng(config.base_seed)
 
-        lulc_base, _ = read_raster(config.lulc_base_raster_path)
-        lulc_target, _ = read_raster(config.lulc_target_raster_path)
+        lulc_base, _ = read_grid(config.lulc_base_raster_path)
+        lulc_target, _ = read_grid(config.lulc_target_raster_path)
 
         rows, cols = lulc_base.shape
         config.grid_rows = int(rows)
         config.grid_cols = int(cols)
 
         reserve_mask = self._build_raster_reserve_mask(config, lulc_base.shape)
-        forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
-        urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
+        forest_codes = parse_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = parse_codes(config.urban_lulc_codes, [8, 9])
 
         forest_base = np.isin(lulc_base, forest_codes)
         forest_target = np.isin(lulc_target, forest_codes)
@@ -71,9 +70,6 @@ class ScenarioEngine:
         return [logging_events, urban_conv_events, urban_edge_events]
 
     def _check_raster_config(self, config):
-        if not rasterio_is_available():
-            raise ValueError("当前环境缺少 rasterio，不能读取 GeoTIFF 栅格。")
-
         required_items = [
             ("AGBD", config.agbd_raster_path),
             ("TCC", config.tcc_raster_path),
@@ -83,21 +79,21 @@ class ScenarioEngine:
             ("保护区", config.reserve_raster_path),
         ]
         optional_items = []
-        for name, path_text in parse_env_raster_paths(config.env_raster_paths):
-            if path_exists(path_text):
+        for name, path_text in parse_envs(config.env_raster_paths):
+            if find_path(path_text).exists():
                 optional_items.append(("环境因子-" + name, path_text))
 
-        validate_raster_alignment(required_items + optional_items, "真实栅格模式")
+        check_rasters(required_items + optional_items, "真实栅格模式")
 
     def _build_raster_reserve_mask(self, config, shape):
-        reserve, _ = read_raster(config.reserve_raster_path)
+        reserve, _ = read_grid(config.reserve_raster_path)
         if reserve.shape != shape:
             raise ValueError("保护区栅格尺寸必须和 LULC 栅格一致。")
         return reserve == config.reserve_value
 
     def _generate_raster_logging_events(self, config, rng, forest_target, reserve_mask):
         # Drivers确定采伐候选区，采伐斑块库从这些区域中提取
-        drivers, _ = read_raster(config.drivers_raster_path)
+        drivers, _ = read_grid(config.drivers_raster_path)
         if drivers.shape != forest_target.shape:
             raise ValueError("Drivers 栅格尺寸必须和 LULC 栅格一致。")
         logging_source = drivers == config.logging_driver_value
@@ -628,23 +624,23 @@ class SeverityEngine:
         return np.clip(picked, 0.0, 0.95)
 
     def _build_empirical_distribution(self, event_type, config):
-        tcc_paths = parse_year_raster_paths(config.history_tcc_paths)
-        lulc_paths = parse_year_raster_paths(config.history_lulc_paths)
+        tcc_paths = parse_years(config.history_tcc_paths)
+        lulc_paths = parse_years(config.history_lulc_paths)
         years = sorted(set(tcc_paths.keys()) & set(lulc_paths.keys()))
         if len(years) < 2:
             return None
 
         rng = np.random.default_rng(int(config.base_seed) + self._severity_seed_offset(event_type) + 90)
-        forest_codes = parse_code_list(config.forest_lulc_codes, [1, 2, 3, 4, 5])
-        urban_codes = parse_code_list(config.urban_lulc_codes, [8, 9])
+        forest_codes = parse_codes(config.forest_lulc_codes, [1, 2, 3, 4, 5])
+        urban_codes = parse_codes(config.urban_lulc_codes, [8, 9])
         samples = []
         max_samples = max(200, int(config.severity_sample_count))
         drivers_class = None
         drivers_loss_year = None
         if event_type == "logging":
             try:
-                drivers_class, _ = read_raster_band(config.drivers_raster_path, 1)
-                drivers_loss_year, _ = read_raster_band(config.drivers_raster_path, 4)
+                drivers_class, _ = read_band(config.drivers_raster_path, 1)
+                drivers_loss_year, _ = read_band(config.drivers_raster_path, 4)
             except Exception as error:
                 raise ValueError("Drivers栅格需要包含分类波段和loss year波段：" + str(error))
 
@@ -654,10 +650,10 @@ class SeverityEngine:
             end_year = years[index + 1]
             if int(end_year) - int(start_year) != 1:
                 continue
-            if not path_exists(tcc_paths[start_year]) or not path_exists(tcc_paths[end_year]):
+            if not find_path(tcc_paths[start_year]).exists() or not find_path(tcc_paths[end_year]).exists():
                 continue
-            tcc_start, _ = read_raster(tcc_paths[start_year], make_float=True)
-            tcc_end, _ = read_raster(tcc_paths[end_year], make_float=True)
+            tcc_start, _ = read_grid(tcc_paths[start_year], make_float=True)
+            tcc_end, _ = read_grid(tcc_paths[end_year], make_float=True)
             tcc_start = self._normalize_tcc(tcc_start)
             tcc_end = self._normalize_tcc(tcc_end)
             mask = np.isfinite(tcc_start) & np.isfinite(tcc_end)
@@ -709,10 +705,10 @@ class SeverityEngine:
     def _build_urban_history_mask(self, mask, lulc_paths, start_year, end_year, raster_shape, event_type, forest_codes, urban_codes):
         if start_year not in lulc_paths or end_year not in lulc_paths:
             return None
-        if not path_exists(lulc_paths[start_year]) or not path_exists(lulc_paths[end_year]):
+        if not find_path(lulc_paths[start_year]).exists() or not find_path(lulc_paths[end_year]).exists():
             return None
-        lulc_start, _ = read_raster(lulc_paths[start_year])
-        lulc_end, _ = read_raster(lulc_paths[end_year])
+        lulc_start, _ = read_grid(lulc_paths[start_year])
+        lulc_end, _ = read_grid(lulc_paths[end_year])
         if lulc_start.shape != raster_shape or lulc_end.shape != raster_shape:
             return None
 
@@ -747,12 +743,12 @@ class SeverityEngine:
             samples.append(item)
 
     def _load_severity_env_surfaces(self, config, shape):
-        env_items = parse_env_raster_paths(config.env_raster_paths)
+        env_items = parse_envs(config.env_raster_paths)
         env_map = {}
         for name, path_text in env_items:
-            if not path_exists(path_text):
+            if not find_path(path_text).exists():
                 continue
-            data, _ = read_raster(path_text, make_float=True)
+            data, _ = read_grid(path_text, make_float=True)
             if data.shape != shape:
                 continue
             env_map[name] = self._normalize_env_surface(data)
@@ -785,7 +781,7 @@ class SeverityEngine:
             item[name] = float(env_surfaces[name][row, col])
 
     def _build_future_severity_features(self, records, config):
-        tcc, _ = read_raster(config.tcc_raster_path, make_float=True)
+        tcc, _ = read_grid(config.tcc_raster_path, make_float=True)
         tcc = self._normalize_tcc(tcc)
         env_surfaces = self._load_severity_env_surfaces(config, tcc.shape)
         rows = records["row"].to_numpy(dtype=int)

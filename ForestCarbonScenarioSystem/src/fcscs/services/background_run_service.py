@@ -6,8 +6,8 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from fcscs.config.defaults import clean_name
-from fcscs.engines.raster_tools import resolve_output_dir
+from fcscs.config.defaults import name_clean
+from fcscs.engines.raster_tools import get_out_dir
 from fcscs.services.quick_run_service import build_quick_config
 
 
@@ -17,9 +17,9 @@ STATUS_FILE_NAME = "run_status.json"
 # 后台运行服务负责创建批次目录、启动子进程并记录状态
 
 
-def get_batch_output_dir(config, create=True):
-    batch_name = clean_name(config.batch_name, default="运行批次")
-    batch_dir = resolve_output_dir(config.output_dir) / batch_name
+def get_batch_out_dir(config, create=True):
+    batch_name = name_clean(config.batch_name, default="运行批次")
+    batch_dir = get_out_dir(config.output_dir) / batch_name
     if create:
         batch_dir.mkdir(parents=True, exist_ok=True)
     return batch_dir
@@ -30,7 +30,7 @@ def start_background_run(config, run_mode, quick_size):
     if run_mode == "快速测试":
         run_config = build_quick_config(config, quick_size)
 
-    batch_dir = get_batch_output_dir(run_config, create=True)
+    batch_dir = get_batch_out_dir(run_config, create=True)
     log_dir = batch_dir / "run_logs"
     log_dir.mkdir(parents=True, exist_ok=True)
 
@@ -205,14 +205,14 @@ def _process_is_alive(pid):
         return False
 
 
-def find_recent_jobs(output_dir, limit=10):
+def find_recent_jobs(out_dir, limit=10):
     # 输出目录下每个批次都有一个run_status.json
-    output_dir = Path(output_dir)
-    if not output_dir.exists():
+    out_dir = Path(out_dir)
+    if not out_dir.exists():
         return []
 
     jobs = []
-    for status_path in output_dir.glob("*/" + STATUS_FILE_NAME):
+    for status_path in out_dir.glob("*/" + STATUS_FILE_NAME):
         status = read_status(status_path)
         if not status:
             continue

@@ -5,7 +5,7 @@ import streamlit as st
 
 from fcscs.domain.models import ReportBundle
 from fcscs.ui.app_state import get_config
-from fcscs.ui.common import get_output_directory
+from fcscs.ui.common import get_out_directory
 from fcscs.ui.result_views import (
     render_detail_tables,
     render_distribution_charts,
@@ -102,11 +102,11 @@ def _render_result_tabs(report):
 
 
 def _discover_history_results():
-    output_dir = get_output_directory(get_config(), create=False)
+    out_dir = get_out_directory(get_config(), create=False)
     items = []
 
-    if output_dir.exists():
-        for batch_dir in sorted(output_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
+    if out_dir.exists():
+        for batch_dir in sorted(out_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
             if not batch_dir.is_dir():
                 continue
             report_dir = batch_dir / "report_exports"
@@ -125,8 +125,8 @@ def _discover_history_results():
             )
 
     known_batches = {str(item["batch_name"]) for item in items}
-    if output_dir.exists():
-        for batch_dir in sorted(output_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
+    if out_dir.exists():
+        for batch_dir in sorted(out_dir.iterdir(), key=lambda path: path.stat().st_mtime, reverse=True):
             if not batch_dir.is_dir():
                 continue
             if batch_dir.name in known_batches:

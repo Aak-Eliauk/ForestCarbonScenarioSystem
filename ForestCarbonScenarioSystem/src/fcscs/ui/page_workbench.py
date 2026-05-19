@@ -1,18 +1,18 @@
-import re
+﻿import re
 from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from fcscs.config.defaults import ScenarioConfig, build_batch_name, build_preset_config, clean_name, list_preset_names
-from fcscs.engines.raster_tools import parse_env_raster_paths, parse_year_raster_paths, path_exists, resolve_input_path
+from fcscs.config.defaults import ScenarioConfig, construct_batch, build_preset_config, name_clean, list_preset_names
+from fcscs.engines.raster_tools import parse_envs, parse_years, find_path
 from fcscs.services.background_run_service import find_recent_jobs, read_status, start_background_run, terminate_background_run
 from fcscs.ui.app_state import (
     get_config,
     set_config,
 )
-from fcscs.ui.common import get_batch_output_directory, get_output_directory
+from fcscs.ui.common import get_batch_out_directory, get_out_directory
 from fcscs.ui.styles import render_page_banner
 
 
@@ -72,7 +72,7 @@ def _ensure_wizard_state():
 def _refresh_run_batch_name_when_opening_step(config, step_index):
     previous_step = st.session_state.get(LAST_RENDER_STEP_KEY)
     if step_index == 2 and previous_step != 2:
-        st.session_state["wizard_batch_name"] = build_batch_name(config.scenario_name)
+        st.session_state["wizard_batch_name"] = construct_batch(config.scenario_name)
     st.session_state[LAST_RENDER_STEP_KEY] = step_index
 
 
@@ -226,7 +226,7 @@ def _build_step_labels(config):
 
 
 def _render_data_step(current):
-    output_dir = _folder_path_input("输出文件夹", current.output_dir, "wizard_output_dir")
+    out_dir = _folder_path_input("输出文件夹", current.output_dir, "wizard_out_dir")
     project_rasters = _find_project_rasters()
 
     _render_section_title("基础栅格数据", "用于确定基准年森林碳储量和目标年土地利用变化。")
@@ -324,7 +324,7 @@ def _render_data_step(current):
                 return
 
             new_config = current.copy()
-            new_config.output_dir = output_dir
+            new_config.output_dir = out_dir
             new_config.agbd_raster_path = agbd_raster_path
             new_config.tcc_raster_path = tcc_raster_path
             new_config.lulc_base_raster_path = lulc_base_raster_path
@@ -460,7 +460,7 @@ def _render_scenario_step(current):
                 return
 
             new_config = current.copy()
-            new_config.scenario_name = clean_name(scenario_name)
+            new_config.scenario_name = name_clean(scenario_name)
             new_config.base_year = int(base_year)
             new_config.target_year = int(target_year)
             new_config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
@@ -534,11 +534,11 @@ def _render_run_step(config):
     running_count = len(running_jobs)
 
     if "wizard_batch_name" not in st.session_state:
-        st.session_state["wizard_batch_name"] = build_batch_name(config.scenario_name)
+        st.session_state["wizard_batch_name"] = construct_batch(config.scenario_name)
     batch_name = st.text_input("运行批次名", key="wizard_batch_name")
     batch_preview_config = config.copy()
-    batch_preview_config.batch_name = clean_name(batch_name, default=build_batch_name(config.scenario_name))
-    batch_dir = get_batch_output_directory(batch_preview_config, create=False)
+    batch_preview_config.batch_name = name_clean(batch_name, default=construct_batch(config.scenario_name))
+    batch_dir = get_batch_out_directory(batch_preview_config, create=False)
     st.caption("本次结果将保存到：" + str(batch_dir))
     if batch_dir.exists():
         st.warning("该批次目录已经存在。开始运行时系统会自动追加时间后缀，避免覆盖已有结果。")
@@ -633,13 +633,13 @@ def _render_run_complete_actions():
 
 def _prepare_run_config(config, batch_name):
     run_config = config.copy()
-    safe_batch_name = clean_name(batch_name, default=build_batch_name(config.scenario_name))
+    safe_batch_name = name_clean(batch_name, default=construct_batch(config.scenario_name))
     run_config.batch_name = safe_batch_name
 
-    batch_dir = get_batch_output_directory(run_config, create=False)
+    batch_dir = get_batch_out_directory(run_config, create=False)
     if batch_dir.exists():
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_config.batch_name = clean_name(safe_batch_name + "_" + timestamp)
+        run_config.batch_name = name_clean(safe_batch_name + "_" + timestamp)
 
     return run_config
 
@@ -675,8 +675,8 @@ def _get_active_background_status(config):
         if BACKGROUND_STATUS_PATH_KEY in st.session_state:
             del st.session_state[BACKGROUND_STATUS_PATH_KEY]
 
-    output_dir = get_output_directory(config, create=False)
-    recent_jobs = _visible_recent_jobs(output_dir, limit=1)
+    out_dir = get_out_directory(config, create=False)
+    recent_jobs = _visible_recent_jobs(out_dir, limit=1)
     if recent_jobs:
         st.session_state[BACKGROUND_STATUS_PATH_KEY] = recent_jobs[0].get("status_path", "")
         return recent_jobs[0]
@@ -684,8 +684,8 @@ def _get_active_background_status(config):
 
 
 def _render_background_job_panel(config, active_status):
-    output_dir = get_output_directory(config, create=False)
-    recent_jobs = _visible_recent_jobs(output_dir, limit=8)
+    out_dir = get_out_directory(config, create=False)
+    recent_jobs = _visible_recent_jobs(out_dir, limit=8)
     if not active_status and not recent_jobs:
         return
 
@@ -736,8 +736,8 @@ def _render_background_job_panel(config, active_status):
                 break
 
 
-def _visible_recent_jobs(output_dir, limit=8):
-    all_jobs = find_recent_jobs(output_dir, limit=50)
+def _visible_recent_jobs(out_dir, limit=8):
+    all_jobs = find_recent_jobs(out_dir, limit=50)
     visible_jobs = []
     for job in all_jobs:
         if _should_show_status_job(job):
@@ -746,8 +746,8 @@ def _visible_recent_jobs(output_dir, limit=8):
 
 
 def _running_background_jobs(config):
-    output_dir = get_output_directory(config, create=False)
-    all_jobs = find_recent_jobs(output_dir, limit=50)
+    out_dir = get_out_directory(config, create=False)
+    all_jobs = find_recent_jobs(out_dir, limit=50)
     running_jobs = []
     for job in all_jobs:
         state = str(job.get("state", ""))
@@ -917,10 +917,10 @@ def _read_run_event_rows(log_path_text, limit=10):
 
 def _get_recent_log_files(limit=12):
     config = get_config()
-    output_dir = get_output_directory(config, create=False)
+    out_dir = get_out_directory(config, create=False)
     log_files = []
-    if output_dir.exists():
-        for path in output_dir.glob("*/run_logs/run_events.log"):
+    if out_dir.exists():
+        for path in out_dir.glob("*/run_logs/run_events.log"):
             status_path = path.parent.parent / "run_status.json"
             status = read_status(status_path)
             state = str(status.get("state", ""))
@@ -975,7 +975,7 @@ def _build_preflight_rows(config):
     rows = []
     rows.append({"检查项": "数据配置", "状态": "通过" if _data_ready(config) else "未通过", "说明": "必填数据已配置"})
     rows.append({"检查项": "情景年份", "状态": "通过" if _scenario_ready(config) else "未通过", "说明": f"{config.base_year} 到 {config.target_year}"})
-    rows.append({"检查项": "输出目录", "状态": "通过" if _output_dir_ready(config) else "未通过", "说明": config.output_dir})
+    rows.append({"检查项": "输出目录", "状态": "通过" if _out_dir_ready(config) else "未通过", "说明": config.output_dir})
     history_ready, history_detail = _history_training_ready_detail(config)
     rows.append({"检查项": "历史训练数据", "状态": "通过" if history_ready else "未通过", "说明": history_detail})
     return rows
@@ -1215,7 +1215,7 @@ def _should_skip_path(path):
 
 
 def _get_env_path_by_role(env_text, role):
-    env_items = parse_env_raster_paths(env_text)
+    env_items = parse_envs(env_text)
     candidate_words = _env_candidate_words(role)
 
     for name, path_text in env_items:
@@ -1229,7 +1229,7 @@ def _get_env_path_by_role(env_text, role):
 
 def _get_extra_env_items(env_text):
     items = []
-    env_items = parse_env_raster_paths(env_text)
+    env_items = parse_envs(env_text)
     fixed_paths = {
         _get_env_path_by_role(env_text, "terrain"),
         _get_env_path_by_role(env_text, "climate"),
@@ -1414,7 +1414,7 @@ def _render_year_raster_row(row, project_rasters, key_prefix, index):
 
 def _parse_year_path_items(text_value):
     items = []
-    env_items = parse_env_raster_paths(text_value)
+    env_items = parse_envs(text_value)
     for year_text, path_text in env_items:
         items.append({"year": str(year_text).strip(), "path": str(path_text).strip()})
     return items
@@ -1619,10 +1619,10 @@ def _raster_path_problem(label, path_text):
     text = str(path_text or "").strip()
     if text == "":
         return label + "未填写"
-    suffix = resolve_input_path(text).suffix.lower()
+    suffix = find_path(text).suffix.lower()
     if suffix not in {".tif", ".tiff"}:
         return label + "格式不正确，需要 GeoTIFF（.tif 或 .tiff）"
-    if not path_exists(text):
+    if not find_path(text).exists():
         return label + "文件不存在或路径无法读取"
     return ""
 
@@ -1632,7 +1632,7 @@ def _history_training_ready_detail(config):
     if errors:
         return False, errors[0]
 
-    agbd_paths = parse_year_raster_paths(config.history_agbd_paths)
+    agbd_paths = parse_years(config.history_agbd_paths)
     years = sorted(agbd_paths.keys())
     if not years:
         return False, "历史训练数据未填写"
@@ -1663,7 +1663,7 @@ def _clear_data_widget_state():
             or key.startswith("wizard_extra_env_")
             or key == "wizard_extra_env_count"
             or key.startswith("wizard_hist_")
-            or key == "wizard_output_dir_path_text"
+            or key == "wizard_out_dir_path_text"
         ):
             del st.session_state[key]
 
@@ -1695,9 +1695,9 @@ def _scenario_ready(config):
     return int(config.target_year) > int(config.base_year)
 
 
-def _output_dir_ready(config):
+def _out_dir_ready(config):
     try:
-        get_output_directory(config, create=False)
+        get_out_directory(config, create=False)
         return True
     except Exception:
         return False

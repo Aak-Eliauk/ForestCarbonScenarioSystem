@@ -1,11 +1,10 @@
-from fcscs.config.defaults import clean_name
+﻿from fcscs.config.defaults import name_clean
 from fcscs.engines.raster_tools import (
-    parse_env_raster_paths,
-    parse_year_raster_paths,
-    path_exists,
-    resolve_input_path,
-    resolve_output_dir,
-    validate_raster_alignment,
+    parse_envs,
+    parse_years,
+    find_path,
+    get_out_dir,
+    check_rasters,
 )
 
 
@@ -26,20 +25,20 @@ def build_quick_raster_config(config, quick_size):
         ("保护区", config.reserve_raster_path),
     ]
     optional_items = []
-    for name, path_text in parse_env_raster_paths(config.env_raster_paths):
-        if path_exists(path_text):
+    for name, path_text in parse_envs(config.env_raster_paths):
+        if find_path(path_text).exists():
             optional_items.append(("环境因子-" + name, path_text))
-    validate_raster_alignment(required_items + optional_items, "快速测试栅格")
+    check_rasters(required_items + optional_items, "快速测试栅格")
 
-    batch_dir = clean_name(str(config.batch_name) + "_快速测试", default="运行批次")
-    output_dir = resolve_output_dir(config.output_dir) / batch_dir / "quick_test_inputs"
-    output_dir.mkdir(parents=True, exist_ok=True)
+    batch_dir = name_clean(str(config.batch_name) + "_快速测试", default="运行批次")
+    out_dir = get_out_dir(config.output_dir) / batch_dir / "quick_test_inputs"
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-    agbd_path = resolve_input_path(config.agbd_raster_path)
-    lulc_base_path = resolve_input_path(config.lulc_base_raster_path)
-    lulc_target_path = resolve_input_path(config.lulc_target_raster_path)
-    drivers_path = resolve_input_path(config.drivers_raster_path)
-    reserve_path = resolve_input_path(config.reserve_raster_path)
+    agbd_path = find_path(config.agbd_raster_path)
+    lulc_base_path = find_path(config.lulc_base_raster_path)
+    lulc_target_path = find_path(config.lulc_target_raster_path)
+    drivers_path = find_path(config.drivers_raster_path)
+    reserve_path = find_path(config.reserve_raster_path)
 
     with rasterio.open(agbd_path) as src:
         rows = src.height
@@ -49,21 +48,21 @@ def build_quick_raster_config(config, quick_size):
     window = _pick_quick_window(lulc_base_path, lulc_target_path, drivers_path, reserve_path, config, size, np, rasterio)
 
     clipped_paths = {}
-    clipped_paths["agbd"] = _clip_one_raster(config.agbd_raster_path, output_dir / "agbd.tif", window, rasterio)
-    clipped_paths["tcc"] = _clip_one_raster(config.tcc_raster_path, output_dir / "tcc.tif", window, rasterio)
-    clipped_paths["lulc_base"] = _clip_one_raster(config.lulc_base_raster_path, output_dir / "lulc_base.tif", window, rasterio)
-    clipped_paths["lulc_target"] = _clip_one_raster(config.lulc_target_raster_path, output_dir / "lulc_target.tif", window, rasterio)
+    clipped_paths["agbd"] = _clip_one_raster(config.agbd_raster_path, out_dir / "agbd.tif", window, rasterio)
+    clipped_paths["tcc"] = _clip_one_raster(config.tcc_raster_path, out_dir / "tcc.tif", window, rasterio)
+    clipped_paths["lulc_base"] = _clip_one_raster(config.lulc_base_raster_path, out_dir / "lulc_base.tif", window, rasterio)
+    clipped_paths["lulc_target"] = _clip_one_raster(config.lulc_target_raster_path, out_dir / "lulc_target.tif", window, rasterio)
 
-    clipped_paths["drivers"] = _clip_all_bands_raster(config.drivers_raster_path, output_dir / "drivers.tif", window, rasterio)
-    clipped_paths["reserve"] = _clip_one_raster(config.reserve_raster_path, output_dir / "reserve.tif", window, rasterio)
+    clipped_paths["drivers"] = _clip_all_bands_raster(config.drivers_raster_path, out_dir / "drivers.tif", window, rasterio)
+    clipped_paths["reserve"] = _clip_one_raster(config.reserve_raster_path, out_dir / "reserve.tif", window, rasterio)
 
-    env_text = _clip_env_rasters(config.env_raster_paths, output_dir, window, rasterio)
-    history_agbd_text = _clip_year_rasters(config.history_agbd_paths, output_dir / "history_agbd", window, rasterio)
-    history_tcc_text = _clip_year_rasters(config.history_tcc_paths, output_dir / "history_tcc", window, rasterio)
-    history_lulc_text = _clip_year_rasters(config.history_lulc_paths, output_dir / "history_lulc", window, rasterio)
+    env_text = _clip_env_rasters(config.env_raster_paths, out_dir, window, rasterio)
+    history_agbd_text = _clip_year_rasters(config.history_agbd_paths, out_dir / "history_agbd", window, rasterio)
+    history_tcc_text = _clip_year_rasters(config.history_tcc_paths, out_dir / "history_tcc", window, rasterio)
+    history_lulc_text = _clip_year_rasters(config.history_lulc_paths, out_dir / "history_lulc", window, rasterio)
 
     quick_config = config.copy()
-    quick_config.scenario_name = clean_name(config.scenario_name + "_quick_test")
+    quick_config.scenario_name = name_clean(config.scenario_name + "_quick_test")
     quick_config.batch_name = batch_dir
     quick_config.agbd_raster_path = str(clipped_paths["agbd"])
     quick_config.tcc_raster_path = str(clipped_paths["tcc"])
@@ -125,7 +124,7 @@ def _pick_quick_window(lulc_base_path, lulc_target_path, drivers_path, reserve_p
 
 
 def _clip_one_raster(source_path, output_path, raster_window, rasterio):
-    source_path = resolve_input_path(source_path)
+    source_path = find_path(source_path)
     with rasterio.open(source_path) as src:
         data = src.read(1, window=raster_window)
         profile = src.profile.copy()
@@ -136,7 +135,7 @@ def _clip_one_raster(source_path, output_path, raster_window, rasterio):
 
 
 def _clip_all_bands_raster(source_path, output_path, raster_window, rasterio):
-    source_path = resolve_input_path(source_path)
+    source_path = find_path(source_path)
     with rasterio.open(source_path) as src:
         data = src.read(window=raster_window)
         profile = src.profile.copy()
@@ -146,27 +145,27 @@ def _clip_all_bands_raster(source_path, output_path, raster_window, rasterio):
     return output_path
 
 
-def _clip_env_rasters(env_text, output_dir, raster_window, rasterio):
+def _clip_env_rasters(env_text, out_dir, raster_window, rasterio):
     lines = []
-    env_items = parse_env_raster_paths(env_text)
+    env_items = parse_envs(env_text)
     for name, path_text in env_items:
-        if not path_exists(path_text):
+        if not find_path(path_text).exists():
             continue
-        output_path = output_dir / ("env_" + _safe_file_name(name) + ".tif")
+        output_path = out_dir / ("env_" + _safe_file_name(name) + ".tif")
         _clip_one_raster(path_text, output_path, raster_window, rasterio)
         lines.append(name + "=" + str(output_path))
     return "\n".join(lines)
 
 
-def _clip_year_rasters(year_text, output_dir, raster_window, rasterio):
+def _clip_year_rasters(year_text, out_dir, raster_window, rasterio):
     lines = []
-    output_dir.mkdir(parents=True, exist_ok=True)
-    year_items = parse_year_raster_paths(year_text)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    year_items = parse_years(year_text)
     for year in sorted(year_items.keys()):
         path_text = year_items[year]
-        if not path_exists(path_text):
+        if not find_path(path_text).exists():
             continue
-        output_path = output_dir / (str(year) + ".tif")
+        output_path = out_dir / (str(year) + ".tif")
         _clip_one_raster(path_text, output_path, raster_window, rasterio)
         lines.append(str(year) + "=" + str(output_path))
     return "\n".join(lines)
