@@ -17,8 +17,8 @@ from rasterio.transform import from_origin
 from fcscs import __version__
 from fcscs.config.defaults import ScenarioConfig
 from fcscs.domain.models import EventTable
-from fcscs.engines.monte_carlo_engine import AGBDModelEngine, MonteCarloEngine, ReportEngine
-from fcscs.engines.scenario_engine import ScenarioEngine, SeverityEngine
+from fcscs.engines.monte_carlo_engine import run_monte_carlo, build_report, train_models_from_history, build_raster_feature_surfaces, check_raster_inputs_for_prediction, train_models
+from fcscs.engines.scenario_engine import generate_events, assign_severity_to_events
 
 
 class FullWorkflowTest(unittest.TestCase):
@@ -129,12 +129,11 @@ class FullWorkflowTest(unittest.TestCase):
 
     def run_complete_flow(self, severity_method):
         config = self.build_small_config(severity_method)
-        scenario_engine = ScenarioEngine()
-        events = scenario_engine.generate_all_events(config)
-        severity_events = SeverityEngine().assign_all(events, config)
-        bundle = MonteCarloEngine().run(severity_events, config)
-        report = ReportEngine().build_report(bundle)
-        return config, scenario_engine, severity_events, bundle, report
+        events = generate_events(config)
+        severity_events = assign_severity_to_events(events, config)
+        bundle = run_monte_carlo(severity_events, config)
+        report = build_report(bundle)
+        return config, severity_events, bundle, report
 
     def test_config_yaml_round_trip(self):
         config = self.build_small_config("S1")
@@ -160,7 +159,7 @@ class FullWorkflowTest(unittest.TestCase):
     def test_invalid_year_is_rejected(self):
         config = ScenarioConfig(base_year=2035, target_year=2035)
         with self.assertRaises(ValueError):
-            ScenarioEngine().generate_all_events(config)
+            generate_events(config)
 
     def test_logging_generation_rejects_unplaceable_small_grid(self):
         output_dir = self.get_test_output_dir() / "unplaceable_patch"
@@ -171,7 +170,7 @@ class FullWorkflowTest(unittest.TestCase):
         config.logging_library_patch_count = 5
 
         with self.assertRaisesRegex(ValueError, "采伐事件生成失败"):
-            ScenarioEngine().generate_all_events(config)
+            generate_events(config)
 
     def test_urban_conv_severity_uses_conversion_floor(self):
         records = pd.DataFrame(
@@ -181,15 +180,18 @@ class FullWorkflowTest(unittest.TestCase):
             ]
         )
 
-        event_table = SeverityEngine().assign(EventTable("urban_conv", records), ScenarioConfig())
+        events = [EventTable("urban_conv", records)]
+        event_table = assign_severity_to_events(events, ScenarioConfig())[0]
 
         self.assertGreaterEqual(float(event_table.records["Severity"].min()), 0.62)
 
     def test_s1_full_workflow(self):
-        config, scenario_engine, events, bundle, report = self.run_complete_flow("S1")
+        config, events, bundle, report = self.run_complete_flow("S1")
         self.assertEqual(config.severity_method, "S1")
         self.assertEqual(len(events), 3)
-        self.assertGreater(scenario_engine.last_patch_library.summary()["patch_count"], 0)
+        logging_records = events[0].records
+        self.assertIn("patch_id", logging_records.columns)
+        self.assertGreater(int(logging_records["patch_id"].nunique()), 0)
         self.assertGreater(bundle.summary["mean_agbd_per_ha"], 0)
         self.assertGreater(bundle.summary["mean_agc_per_ha"], 0)
         self.assertGreaterEqual(len(bundle.training_summary_df), 2)
@@ -197,7 +199,7 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertFalse(report.total_distribution_df.empty)
 
     def test_s2_full_workflow(self):
-        config, scenario_engine, events, bundle, report = self.run_complete_flow("S2")
+        config, events, bundle, report = self.run_complete_flow("S2")
         self.assertEqual(config.severity_method, "S2")
         self.assertEqual(len(events), 3)
         self.assertGreater(bundle.summary["mean_model_r2"], 0)
@@ -206,7 +208,7 @@ class FullWorkflowTest(unittest.TestCase):
         self.assertFalse(report.training_sample_df.empty)
 
     def test_report_can_be_exported_to_csv(self):
-        _, _, _, bundle, report = self.run_complete_flow("S1")
+        _, _, bundle, report = self.run_complete_flow("S1")
         output_dir = self.get_test_output_dir()
         summary_path = output_dir / "summary.csv"
         distribution_path = output_dir / "distribution.csv"
@@ -234,11 +236,10 @@ class FullWorkflowTest(unittest.TestCase):
         config.ml_n_estimators = 10
         config.ml_max_depth = 4
 
-        scenario_engine = ScenarioEngine()
-        events = scenario_engine.generate_all_events(config)
-        events = SeverityEngine().assign_all(events, config)
-        bundle = MonteCarloEngine().run(events, config)
-        report = ReportEngine().build_report(bundle)
+        events = generate_events(config)
+        events = assign_severity_to_events(events, config)
+        bundle = run_monte_carlo(events, config)
+        report = build_report(bundle)
 
         self.assertEqual(bundle.summary["data_mode"], "raster")
         self.assertGreater(bundle.summary["mean_agbd_per_ha"], 0)
@@ -330,9 +331,9 @@ class FullWorkflowTest(unittest.TestCase):
             output_dir=str(output_dir),
         )
 
-        events = ScenarioEngine().generate_all_events(config)
-        events = SeverityEngine().assign_all(events, config)
-        bundle = MonteCarloEngine().run(events, config)
+        events = generate_events(config)
+        events = assign_severity_to_events(events, config)
+        bundle = run_monte_carlo(events, config)
 
         self.assertFalse(bundle.training_sample_df.empty)
         self.assertIn("sample_weight", bundle.training_sample_df.columns)
@@ -368,7 +369,7 @@ class FullWorkflowTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "空间范围不一致"):
-            ScenarioEngine().generate_all_events(config)
+            generate_events(config)
 
     def test_all_nodata_agbd_is_rejected(self):
         output_dir = self.get_test_output_dir() / "raster_nodata"
@@ -388,7 +389,7 @@ class FullWorkflowTest(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "AGBD 有效像元不足"):
-            AGBDModelEngine()._build_raster_feature_surfaces(config, np.random.default_rng(1))
+            build_raster_feature_surfaces(config, np.random.default_rng(1))
 
     def write_test_raster(self, path, data, dtype, nodata):
         profile = {

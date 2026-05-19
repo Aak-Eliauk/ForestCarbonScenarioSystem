@@ -463,7 +463,7 @@ def _render_scenario_step(current):
             new_config.scenario_name = name_clean(scenario_name)
             new_config.base_year = int(base_year)
             new_config.target_year = int(target_year)
-            new_config.future_years = ScenarioConfig.build_future_years(base_year, target_year)
+            new_config.future_years = new_config.build_future_years(base_year, target_year)
             new_config.logging_area_reduction = float(logging_area_reduction)
             new_config.logging_severity_reduction = float(logging_severity_reduction)
             new_config.logging_severity_cap_quantile = float(logging_cap)
